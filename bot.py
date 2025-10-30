@@ -85,7 +85,7 @@ class ChibiBot:
         emojis = ['🐊', '🐸', '🤖', '⛄️', '🐲', '👽']
         
         # Случайные имена
-        names = ['Грирт', 'Таррек', 'Грит', 'Тарр', 'Крилл', 'Гето', 'Дин']
+        names = ['Грирт', 'Таррек', 'Грит', 'Тарр', 'Крилл', 'Гето', 'Дин', 'Боксо', 'Мерин', 'Хрило', 'Гомадо', 'Грож']
         
         # Случайные реплики
         phrases = [
@@ -221,11 +221,102 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                 logger.error(f"Ошибка при генерации задания: {e}")
                 self.bot.send_message(message.chat.id, "❌ Ошибка при создании задания. Попробуйте позже.")
 
-        # Обработчик callback для кнопок (пока ничего не делает)
+        @self.bot.message_handler(commands=['menu'])
+        def menu_handler(message):
+            try:
+                menu_text = """*✨ Меню* 
+_Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались_"""
+                
+                # Создаем кнопки меню
+                markup = types.InlineKeyboardMarkup(row_width=2)
+                btn_warehouse = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
+                btn_channel = types.InlineKeyboardButton("Наш тгк", url=BOT_CONFIG['telegram_channel'])
+                btn_bonus = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
+                
+                # Располагаем кнопки по две в ряд
+                markup.add(btn_warehouse, btn_channel)
+                markup.add(btn_bonus)
+                
+                self.bot.send_message(
+                    message.chat.id,
+                    menu_text,
+                    reply_markup=markup,
+                    parse_mode='Markdown'
+                )
+                
+            except Exception as e:
+                logger.error(f"Ошибка при открытии меню: {e}")
+                self.bot.send_message(message.chat.id, "❌ Ошибка при открытии меню. Попробуйте позже.")
+
+        # Обработчик callback для кнопок
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
-            # Просто отвечаем на callback, чтобы убрать "часики" у кнопки
-            self.bot.answer_callback_query(call.id)
+            try:
+                if call.data == "task_complete":
+                    self.bot.answer_callback_query(call.id, "Задание пока нельзя сдать!")
+                    
+                elif call.data == "task_skip":
+                    self.bot.answer_callback_query(call.id, "Задание пропущено!")
+                    # Удаляем сообщение с заданием
+                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
+                    
+                elif call.data == "menu_warehouse":
+                    # Показываем меню склада
+                    warehouse_text = """*📦 Перепутье*
+_Выбери, на какой раздел склада хочешь глянуть_"""
+                    
+                    markup = types.InlineKeyboardMarkup(row_width=2)
+                    btn_chibis = types.InlineKeyboardButton("Чибики", callback_data="warehouse_chibis")
+                    btn_items = types.InlineKeyboardButton("Предметы", callback_data="warehouse_items")
+                    btn_back = types.InlineKeyboardButton("Назад", callback_data="menu_back")
+                    
+                    markup.add(btn_chibis, btn_items)
+                    markup.add(btn_back)
+                    
+                    self.bot.edit_message_text(
+                        warehouse_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data == "warehouse_chibis":
+                    self.bot.answer_callback_query(call.id, "Раздел 'Чибики' пока пуст!")
+                    
+                elif call.data == "warehouse_items":
+                    self.bot.answer_callback_query(call.id, "Раздел 'Предметы' пока пуст!")
+                    
+                elif call.data == "menu_back":
+                    # Возвращаемся к главному меню
+                    menu_text = """*✨ Меню* 
+_Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались_"""
+                    
+                    markup = types.InlineKeyboardMarkup(row_width=2)
+                    btn_warehouse = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
+                    btn_channel = types.InlineKeyboardButton("Наш тгк", url=BOT_CONFIG['telegram_channel'])
+                    btn_bonus = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
+                    
+                    markup.add(btn_warehouse, btn_channel)
+                    markup.add(btn_bonus)
+                    
+                    self.bot.edit_message_text(
+                        menu_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data == "menu_bonus":
+                    self.bot.answer_callback_query(call.id, "Ежедневный бонус пока недоступен!")
+                    
+                else:
+                    self.bot.answer_callback_query(call.id)
+                    
+            except Exception as e:
+                logger.error(f"Ошибка в callback: {e}")
+                self.bot.answer_callback_query(call.id, "❌ Ошибка!")
 
     def run(self):
         logger.info("🤖 Чиби-бот запущен!")
