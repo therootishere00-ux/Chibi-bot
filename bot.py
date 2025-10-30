@@ -2,14 +2,13 @@ import telebot
 from telebot import types
 import random
 import string
-from datetime import datetime
 import os
 import logging
 import threading
 from flask import Flask
+from datetime import datetime
 
 from config import BOT_CONFIG, BOT_TEXTS
-from database_mongo import MongoDB
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,8 +16,8 @@ logger = logging.getLogger(__name__)
 class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
-        self.db = MongoDB()
-        self.used_ids = self.db.get_all_used_ids()
+        self.users = {}  # Храним в памяти
+        self.used_ids = set()
         
     def generate_unique_user_id(self):
         attempts = 0
@@ -34,25 +33,25 @@ class ChibiBot:
         return f"U{random.randint(1000, 9999)}"
     
     def get_or_create_user(self, telegram_id, first_name=None, username=None):
-        existing_user = self.db.get_user(telegram_id)
-        if existing_user:
-            self.db.update_user(telegram_id, {'last_active': datetime.now()})
-            existing_user['last_active'] = datetime.now()
-            return existing_user, False
+        telegram_id_str = str(telegram_id)
+        
+        if telegram_id_str in self.users:
+            # Существующий пользователь
+            self.users[telegram_id_str]['last_active'] = datetime.now()
+            return self.users[telegram_id_str], False
         else:
+            # Новый пользователь
             user_id = self.generate_unique_user_id()
             user_data = {
                 'user_id': user_id,
                 'first_name': first_name,
                 'username': username,
-                'inventory': BOT_CONFIG['welcome_bonus'].copy(),
                 'registration_date': datetime.now(),
                 'last_active': datetime.now()
             }
-            if self.db.create_user(telegram_id, user_data):
-                logger.info(f"Новый пользователь: {user_id}")
-                return user_data, True
-            return user_data, False
+            self.users[telegram_id_str] = user_data
+            logger.info(f"Новый пользователь: {user_id}")
+            return user_data, True
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -90,6 +89,13 @@ class ChibiBot:
                 self.bot.send_message(message.chat.id, f"Твой айди — `{user_id}`", parse_mode='Markdown')
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
+
+        @self.bot.message_handler(commands=['stats'])
+        def stats_handler(message):
+            stats_text = f"""📊 *Статистика бота*
+Пользователей: {len(self.users)}
+Бот активен: ✅"""
+            self.bot.send_message(message.chat.id, stats_text, parse_mode='Markdown')
 
     def run(self):
         logger.info("🤖 Чиби-бот запущен!")
