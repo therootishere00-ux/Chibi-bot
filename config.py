@@ -1,6 +1,5 @@
 BOT_CONFIG = {
-    'telegram_channel': 'https://t.me/chibeki_official',
-    'welcome_bonus': {'chibis': 1, 'coins': 0}
+    'telegram_channel': 'https://t.me/chibeki_official'
 }
 
 BOT_TEXTS = {
