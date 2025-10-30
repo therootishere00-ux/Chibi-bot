@@ -12,5 +12,3 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Отправляем текстовое сообщение
     welcome_text = START_MESSAGE.format(name=user.first_name)
     await update.message.reply_text(welcome_text, parse_mode='Markdown')
-
-# Здесь будут другие команды...
