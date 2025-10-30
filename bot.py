@@ -91,8 +91,14 @@ class ChibiBot:
                 
                 user_name = message.from_user.first_name or "путешественник"
                 
-                # Отправляем стикер
-                sticker_id = "CAACAgIAAxkBAAE9JsNpAzQZv6b4b-KZ3ftL2Sld0kUjDQAC400AAkuWEEosjitzZk8fzDYE"
+                # Отправляем разные стикеры для нового и существующего пользователя
+                if is_new_user:
+                    # Стикер для нового пользователя (waving hand)
+                    sticker_id = "CAACAgIAAxkBAAE9JsNpAzQZv6b4b-KZ3ftL2Sld0kUjDQAC400AAkuWEEosjitzZk8fzDYE"
+                else:
+                    # Стикер для существующего пользователя (rainbow)
+                    sticker_id = "CAACAgIAAxkBAAE9JstpAzTQNnpt9KcoUte9P7K3CiHpswACmEQAAk-mEEqVynQKXagSVjYE"
+                
                 self.bot.send_sticker(message.chat.id, sticker_id)
                 
                 if is_new_user:
@@ -117,8 +123,8 @@ class ChibiBot:
                 user_data, _ = self.get_or_create_user(message.from_user.id)
                 user_id = user_data['user_id']
                 
-                # Форматируем ID для отображения (скрываем спойлером)
-                response_text = f"⭐️ Твой айди — ||{user_id}||"
+                # Используем моноширинный шрифт (обратные кавычки)
+                response_text = f"⭐️ Твой айди — `{user_id}`"
                 self.bot.send_message(message.chat.id, response_text, parse_mode='Markdown')
                 
             except Exception as e:
