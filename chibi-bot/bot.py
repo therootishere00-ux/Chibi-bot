@@ -23,12 +23,16 @@ def health():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    sticker_id = "CAACAgIAAxkBAAIBAAEAAAAAA9v1AAE1mQABAS0RwWdvPAAAAtQtAAIjBQAC8hLQS5JAAAA2r3j1LQQ"
+    
+    # Правильный File ID стикера 👋 из CrayonsEmojiPack
+    sticker_file_id = "CAACAgIAAxkBAAE9JsNpAzQZv6b4b-KZ3ftL2Sld0kUjDQAC400AAkuWEEosjitzZk8fzDYE"
     
     try:
-        await update.message.reply_sticker(sticker=sticker_id)
+        await update.message.reply_sticker(sticker=sticker_file_id)
     except Exception as e:
         logging.error(f"Ошибка отправки стикера: {e}")
+        # Fallback на эмодзи если стикер не работает
+        await update.message.reply_text("👋")
     
     welcome_text = f"""⚡️*Хей, {user.first_name}!*
 Вижу, ты новичок у нас? Что ж, вероятно ты здесь, потому что любишь коллекционировать ЧИБИКОВ, да?
@@ -50,12 +54,22 @@ def main() -> None:
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("start", start))
     
+    # Добавляем обработчик ошибок
+    async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logging.error(f"Exception while handling an update: {context.error}")
+    
+    application.add_error_handler(error_handler)
+    
     # Запускаем Flask в отдельном потоке
     from threading import Thread
     Thread(target=lambda: app.run(host='0.0.0.0', port=8080, debug=False)).start()
     
-    # Запускаем бота
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Запускаем бота с очисткой обновлений
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,  # Очищает очередь при старте
+        close_loop=False
+    )
 
 if __name__ == '__main__':
     main()
