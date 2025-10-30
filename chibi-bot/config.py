@@ -1,10 +1,10 @@
 import os
 
-BOT_TOKEN = os.environ.get('BOT_TOKEN')
-
-# Текст для сообщений
-START_STICKER_ID = "CAACAgIAAxkBAAE9JsNpAzQZv6b4b-KZ3ftL2Sld0kUjDQAC400AAkuWEEosjitzZk8fzDYE"
-
-# Конфигурация
-POLLING_INTERVAL = 1.0
-TIMEOUT = 10
+class Config:
+    BOT_TOKEN = os.environ.get('BOT_TOKEN')
+    if not BOT_TOKEN:
+        raise ValueError("BOT_TOKEN environment variable is required")
+    
+    # Настройки для веб-сервера (если нужно)
+    PORT = int(os.environ.get('PORT', 8080))
+    WEBHOOK_URL = os.environ.get('WEBHOOK_URL', '')
