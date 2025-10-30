@@ -3,8 +3,8 @@ services:
     name: telegram-chibi-bot
     env: python
     plan: free
-    buildCommand: pip install -r chibi-bot/requirements.txt
-    startCommand: python chibi-bot/bot.py
+    buildCommand: cd chibi-bot && pip install -r requirements.txt
+    startCommand: cd chibi-bot && python bot.py
     envVars:
       - key: BOT_TOKEN
         sync: false
