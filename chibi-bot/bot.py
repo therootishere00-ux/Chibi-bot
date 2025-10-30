@@ -6,7 +6,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 from flask import Flask
 
 # Настройка логирования
-logging.basicconfig(
+logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
@@ -24,7 +24,7 @@ def health():
 
 def get_random_chibi_image():
     """Получает случайную картинку из папок chibis"""
-    base_path = "chibi-bot/chibis"  # Обновленный путь
+    base_path = "chibi-bot/chibis"
     folders = ["common", "secret"]
     
     all_images = []
@@ -52,7 +52,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_sticker(sticker=sticker_file_id)
     except Exception as e:
         logging.error(f"Ошибка отправки стикера: {e}")
-        # Fallback на эмодзи если стикер не работает
         await update.message.reply_text("👋")
     
     # Создаем инлайн-кнопку
@@ -116,20 +115,19 @@ def main() -> None:
     application.add_handler(CommandHandler("chibi", chibi))
     
     # Добавляем обработчик ошибок
-    async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         logging.error(f"Exception while handling an update: {context.error}")
     
     application.add_error_handler(error_handler)
     
     # Запускаем Flask в отдельном потоке
     from threading import Thread
-    Thread(target=lambda: app.run(host='0.0.0.0', port=8080, debug=False)).start()
+    Thread(target=lambda: app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)).start()
     
-    # Запускаем бота с очисткой обновлений
+    # Запускаем бота
     application.run_polling(
         allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-        close_loop=False
+        drop_pending_updates=True
     )
 
 if __name__ == '__main__':
