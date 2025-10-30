@@ -5,7 +5,6 @@ from handlers import start_command
 def setup_handlers(application: Application) -> None:
     """Настройка обработчиков команд"""
     application.add_handler(CommandHandler("start", start_command))
-    # Добавьте другие обработчики здесь
 
 def create_application() -> Application:
     """Создание и настройка приложения"""
