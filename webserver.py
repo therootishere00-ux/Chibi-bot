@@ -1,7 +1,6 @@
 from flask import Flask
-import threading
-import time
 import logging
+import os
 
 # Настройка логирования
 logging.basicConfig(
@@ -21,8 +20,7 @@ def home():
 def health():
     """Эндпоинт для проверки здоровья"""
     return {
-        "status": "healthy",
-        "timestamp": time.time(),
+        "status": "healthy", 
         "service": "chibi-telegram-bot"
     }
 
@@ -35,9 +33,7 @@ def run_web_server():
     """Запуск веб-сервера"""
     try:
         port = int(os.environ.get('PORT', 8080))
+        logger.info(f"Starting web server on port {port}")
         app.run(host='0.0.0.0', port=port)
     except Exception as e:
         logger.error(f"Web server error: {e}")
-
-if __name__ == "__main__":
-    run_web_server()
