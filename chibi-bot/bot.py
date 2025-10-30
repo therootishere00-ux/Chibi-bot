@@ -3,7 +3,7 @@ import logging
 import random
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
-from flask import Flask
+from flask import Flask, request
 
 # Настройка логирования
 logging.basicConfig(
@@ -14,12 +14,25 @@ logging.basicConfig(
 # Flask app для веб-сервера
 app = Flask(__name__)
 
+# Глобальная переменная для бота
+application = None
+
 @app.route('/')
 def home():
     return "Bot is running!", 200
 
 @app.route('/health')
 def health():
+    return "OK", 200
+
+@app.route('/webhook', methods=['POST'])
+async def webhook():
+    """Эндпоинт для вебхуков от Telegram"""
+    if application is None:
+        return "Bot not initialized", 500
+    
+    update = Update.de_json(request.get_json(), application.bot)
+    await application.process_update(update)
     return "OK", 200
 
 def get_random_chibi_image():
@@ -104,10 +117,10 @@ _Надеюсь ты доволен. В любом случае, возвращ�
         logging.error(f"Ошибка отправки картинки: {e}")
         await update.message.reply_text("❌ Ошибка загрузки чибика!")
 
-def main() -> None:
+async def set_webhook():
+    """Устанавливает вебхук для бота"""
     token = os.getenv('BOT_TOKEN')
-    if not token:
-        raise ValueError("BOT_TOKEN не установлен")
+    webhook_url = os.getenv('RENDER_EXTERNAL_URL') + '/webhook'
     
     application = Application.builder().token(token).build()
     
@@ -115,22 +128,29 @@ def main() -> None:
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("chibi", chibi))
     
-    # Добавляем обработчик ошибок
-    async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        logging.error(f"Exception while handling an update: {context.error}")
+    # Устанавливаем вебхук
+    await application.bot.set_webhook(webhook_url)
+    logging.info(f"Webhook set to: {webhook_url}")
     
-    application.add_error_handler(error_handler)
+    return application
+
+def main() -> None:
+    global application
     
-    # Запускаем Flask в отдельном потоке
-    from threading import Thread
-    Thread(target=lambda: app.run(host='0.0.0.0', port=8080, debug=False)).start()
+    token = os.getenv('BOT_TOKEN')
+    if not token:
+        raise ValueError("BOT_TOKEN не установлен")
     
-    # Запускаем бота с очисткой обновлений
-    application.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-        close_loop=False
-    )
+    # Создаем приложение
+    application = Application.builder().token(token).build()
+    
+    # Добавляем обработчики команд
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("chibi", chibi))
+    
+    # Запускаем Flask
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     main()
