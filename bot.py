@@ -91,6 +91,10 @@ class ChibiBot:
                 
                 user_name = message.from_user.first_name or "путешественник"
                 
+                # Отправляем стикер
+                sticker_id = "CAACAgIAAxkBAAE9JsNpAzQZv6b4b-KZ3ftL2Sld0kUjDQAC400AAkuWEEosjitzZk8fzDYE"
+                self.bot.send_sticker(message.chat.id, sticker_id)
+                
                 if is_new_user:
                     welcome_text = BOT_TEXTS['welcome'].format(name=user_name)
                     markup = types.InlineKeyboardMarkup()
@@ -112,9 +116,14 @@ class ChibiBot:
             try:
                 user_data, _ = self.get_or_create_user(message.from_user.id)
                 user_id = user_data['user_id']
-                self.bot.send_message(message.chat.id, f"Твой айди — `{user_id}`", parse_mode='Markdown')
+                
+                # Форматируем ID для отображения (скрываем спойлером)
+                response_text = f"⭐️ Твой айди — ||{user_id}||"
+                self.bot.send_message(message.chat.id, response_text, parse_mode='Markdown')
+                
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
+                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['chibi'])
         def chibi_handler(message):
