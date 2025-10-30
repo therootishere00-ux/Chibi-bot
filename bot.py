@@ -40,21 +40,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.error(f"Error in start command: {e}")
         await update.message.reply_text("⚠️ Произошла ошибка. Попробуйте позже.")
 
-def main() -> None:
-    """Основная функция запуска бота"""
+def start_bot():
+    """Функция запуска бота"""
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN environment variable is not set!")
-        return
+        return None
     
-    # Создаем приложение
-    application = Application.builder().token(BOT_TOKEN).build()
-    
-    # Регистрируем обработчики
-    application.add_handler(CommandHandler("start", start))
-    
-    # Запускаем бота
-    logger.info("Bot is starting...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == "__main__":
-    main()
+    try:
+        # Создаем приложение
+        application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Регистрируем обработчики
+        application.add_handler(CommandHandler("start", start))
+        
+        return application
+    except Exception as e:
+        logger.error(f"Failed to create bot application: {e}")
+        return None
