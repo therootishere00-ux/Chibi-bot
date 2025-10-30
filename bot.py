@@ -53,6 +53,32 @@ class ChibiBot:
             logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
 
+    def get_random_chibi(self):
+        """Получает случайный чиби из папки common"""
+        chibi_folder = "chibis/common"
+        
+        # Проверяем существование папки
+        if not os.path.exists(chibi_folder):
+            logger.error(f"Папка {chibi_folder} не найдена!")
+            return None, None
+        
+        # Получаем список PNG файлов
+        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
+        
+        if not chibi_files:
+            logger.error(f"В папке {chibi_folder} нет PNG файлов!")
+            return None, None
+        
+        # Выбираем случайный файл
+        random_file = random.choice(chibi_files)
+        file_path = os.path.join(chibi_folder, random_file)
+        
+        # Форматируем название файла
+        file_name = os.path.splitext(random_file)[0]  # Убираем расширение
+        formatted_name = file_name.replace('_', ' ')  # Заменяем _ на пробелы
+        
+        return file_path, formatted_name
+
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
@@ -90,12 +116,35 @@ class ChibiBot:
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
 
-        @self.bot.message_handler(commands=['stats'])
-        def stats_handler(message):
-            stats_text = f"""📊 *Статистика бота*
-Пользователей: {len(self.users)}
-Бот активен: ✅"""
-            self.bot.send_message(message.chat.id, stats_text, parse_mode='Markdown')
+        @self.bot.message_handler(commands=['chibi'])
+        def chibi_handler(message):
+            try:
+                file_path, chibi_name = self.get_random_chibi()
+                
+                if file_path is None:
+                    self.bot.send_message(message.chat.id, "❌ Чиби временно недоступны. Попробуйте позже.")
+                    return
+                
+                # Формируем текст сообщения
+                chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!* 
+_Надеюсь, он тебе понравился! Приходи еще через 3ч 59м_ 
+
+Редкость: 🔷 _Common_"""
+                
+                # Отправляем картинку с текстом
+                with open(file_path, 'rb') as photo:
+                    self.bot.send_photo(
+                        message.chat.id,
+                        photo,
+                        caption=chibi_text,
+                        parse_mode='Markdown'
+                    )
+                    
+                logger.info(f"Отправлен чиби: {chibi_name}")
+                    
+            except Exception as e:
+                logger.error(f"Ошибка при отправке чиби: {e}")
+                self.bot.send_message(message.chat.id, "❌ Ошибка при получении чиби. Попробуйте позже.")
 
     def run(self):
         logger.info("🤖 Чиби-бот запущен!")
