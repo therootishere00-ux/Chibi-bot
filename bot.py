@@ -79,6 +79,37 @@ class ChibiBot:
         
         return file_path, formatted_name
 
+    def generate_task(self):
+        """Генерирует случайное задание"""
+        # Случайные эмодзи
+        emojis = ['🐊', '🐸', '🤖', '⛄️', '🐲', '👽']
+        
+        # Случайные имена
+        names = ['Грирт', 'Таррек', 'Грит', 'Тарр', 'Крилл', 'Гето', 'Дин']
+        
+        # Случайные реплики
+        phrases = [
+            "Эй, ты! Принеси-ка мне *{chibi}*, я щедро тебя награжу!",
+            "Приветствую… Очень хочу заполучить *{chibi}*, если принесешь мне его, в долгу не останусь",
+            "Бурабура, лакуш'н, принеси мне *{chibi}*, я готов платить"
+        ]
+        
+        # Получаем случайный чибик для задания
+        _, chibi_name = self.get_random_chibi()
+        if chibi_name is None:
+            chibi_name = "редкого чибика"  # Запасной вариант
+        
+        # Выбираем случайные элементы
+        emoji = random.choice(emojis)
+        name = random.choice(names)
+        phrase = random.choice(phrases).format(chibi=chibi_name)
+        
+        # Формируем текст задания
+        task_text = f"""*{emoji} {name}*
+_{phrase}_"""
+        
+        return task_text
+
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
@@ -160,6 +191,41 @@ _Надеюсь, он тебе понравился! Приходи еще че�
             except Exception as e:
                 logger.error(f"Ошибка при отправке чиби: {e}")
                 self.bot.send_message(message.chat.id, "❌ Ошибка при получении чиби. Попробуйте позже.")
+
+        @self.bot.message_handler(commands=['task'])
+        def task_handler(message):
+            try:
+                task_text = self.generate_task()
+                
+                # Создаем инлайн-кнопки
+                markup = types.InlineKeyboardMarkup(row_width=2)
+                btn_complete = types.InlineKeyboardButton(
+                    "Сдать задание (0/1)", 
+                    callback_data="task_complete"
+                )
+                btn_skip = types.InlineKeyboardButton(
+                    "Пропустить", 
+                    callback_data="task_skip"
+                )
+                markup.add(btn_complete, btn_skip)
+                
+                # Отправляем задание с кнопками
+                self.bot.send_message(
+                    message.chat.id,
+                    task_text,
+                    reply_markup=markup,
+                    parse_mode='Markdown'
+                )
+                
+            except Exception as e:
+                logger.error(f"Ошибка при генерации задания: {e}")
+                self.bot.send_message(message.chat.id, "❌ Ошибка при создании задания. Попробуйте позже.")
+
+        # Обработчик callback для кнопок (пока ничего не делает)
+        @self.bot.callback_query_handler(func=lambda call: True)
+        def callback_handler(call):
+            # Просто отвечаем на callback, чтобы убрать "часики" у кнопки
+            self.bot.answer_callback_query(call.id)
 
     def run(self):
         logger.info("🤖 Чиби-бот запущен!")
