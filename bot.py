@@ -13,6 +13,23 @@ from config import BOT_CONFIG, BOT_TEXTS
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Для отправки ошибок в админ-бота
+ADMIN_BOT_TOKEN = os.getenv('ADMIN_BOT_TOKEN')
+if ADMIN_BOT_TOKEN:
+    admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
+else:
+    admin_bot = None
+
+def report_error_to_admin(error_type, error_code, user_nick=None):
+    """Отправляет ошибку в админ-бота"""
+    if admin_bot:
+        try:
+            # Здесь будет код отправки ошибки админам
+            # Пока просто логируем
+            logger.error(f"Ошибка для админов: {error_type} - {error_code} (Пользователь: {user_nick})")
+        except Exception as e:
+            logger.error(f"Не удалось отправить ошибку админам: {e}")
+
 class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
@@ -65,35 +82,43 @@ class ChibiBot:
 
     def get_random_chibi(self, from_pack=False):
         """Получает случайный чиби из папки common или secret"""
-        if from_pack and random.random() <= 0.05:  # 5% шанс на секретного чибика из пака
-            chibi_folder = "chibis/secret"
-        else:
-            chibi_folder = "chibis/common"
-        
-        # Проверяем существование папки
-        if not os.path.exists(chibi_folder):
-            logger.error(f"Папка {chibi_folder} не найдена!")
+        try:
+            if from_pack and random.random() <= 0.05:  # 5% шанс на секретного чибика из пака
+                chibi_folder = "chibis/secret"
+            else:
+                chibi_folder = "chibis/common"
+            
+            # Проверяем существование папки
+            if not os.path.exists(chibi_folder):
+                logger.error(f"Папка {chibi_folder} не найдена!")
+                report_error_to_admin("FolderNotFound", f"Папка {chibi_folder} не найдена")
+                return None, None, "Common"
+            
+            # Получаем список PNG файлов
+            chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
+            
+            if not chibi_files:
+                logger.error(f"В папке {chibi_folder} нет PNG файлов!")
+                report_error_to_admin("NoChibiFiles", f"В папке {chibi_folder} нет PNG файлов")
+                return None, None, "Common"
+            
+            # Выбираем случайный файл
+            random_file = random.choice(chibi_files)
+            file_path = os.path.join(chibi_folder, random_file)
+            
+            # Форматируем название файла
+            file_name = os.path.splitext(random_file)[0]  # Убираем расширение
+            formatted_name = file_name.replace('_', ' ')  # Заменяем _ на пробелы
+            
+            # Определяем редкость
+            rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
+            
+            return file_path, formatted_name, rarity
+            
+        except Exception as e:
+            logger.error(f"Ошибка при получении чибика: {e}")
+            report_error_to_admin("GetChibiError", str(e))
             return None, None, "Common"
-        
-        # Получаем список PNG файлов
-        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
-        
-        if not chibi_files:
-            logger.error(f"В папке {chibi_folder} нет PNG файлов!")
-            return None, None, "Common"
-        
-        # Выбираем случайный файл
-        random_file = random.choice(chibi_files)
-        file_path = os.path.join(chibi_folder, random_file)
-        
-        # Форматируем название файла
-        file_name = os.path.splitext(random_file)[0]  # Убираем расширение
-        formatted_name = file_name.replace('_', ' ')  # Заменяем _ на пробелы
-        
-        # Определяем редкость
-        rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
-        
-        return file_path, formatted_name, rarity
 
     def get_chibi_count(self, telegram_id, chibi_name):
         """Получает количество конкретного чибика у пользователя"""
@@ -119,9 +144,9 @@ class ChibiBot:
         
         # Случайные реплики
         phrases = [
-            "Эй, ты! Принеси-ка мне {chibi}, я щедро тебя награжу!",
-            "Приветствую… Очень хочу заполучить {chibi}, если принесешь мне его, в долгу не останусь",
-            "Бурабура, лакуш'н, принеси мне {chibi}, я готов платить"
+            "Эй, ты! Принеси-ка мне *{chibi}*, я щедро тебя награжу!",
+            "Приветствую… Очень хочу заполучить *{chibi}*, если принесешь мне его, в долгу не останусь",
+            "Бурабура, лакуш'н, принеси мне *{chibi}*, я готов платить"
         ]
         
         # Получаем случайный чибик для задания
@@ -135,7 +160,7 @@ class ChibiBot:
         # Выбираем случайные элементы
         emoji = random.choice(emojis)
         name = random.choice(names)
-        phrase = random.choice(phrases).format(chibi=f"*{chibi_name}*")  # Жирный шрифт для названия чибика
+        phrase = random.choice(phrases).format(chibi=chibi_name)  # Название чибика уже в фразе
         
         # Сохраняем задание для пользователя
         task_data = {
@@ -160,7 +185,7 @@ class ChibiBot:
         task_text = f"""*{task_data['emoji']} {task_data['name']}*
 _{task_data['phrase']}_
 `•••••••••••••••••••`
-Дам *💰 {task_data['reward']}* за {task_data['chibi']}"""
+Дам *💰 {task_data['reward']}* за *{task_data['chibi']}*"""
         
         return task_text, button_text, has_chibi
 
@@ -256,7 +281,8 @@ _{task_data['phrase']}_
                     
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                report_error_to_admin("StartError", str(e), message.from_user.first_name)
+                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
 
         @self.bot.message_handler(commands=['myid'])
         def myid_handler(message):
@@ -270,7 +296,8 @@ _{task_data['phrase']}_
                 
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                report_error_to_admin("MyIdError", str(e), message.from_user.first_name)
+                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
 
         @self.bot.message_handler(commands=['chibi'])
         def chibi_handler(message):
@@ -295,7 +322,7 @@ _{task_data['phrase']}_
                 chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
 _Надеюсь, он тебе понравился! Приходи еще через *3ч 59м*_
 `•••••••••••••••••••`
-Редкость: {rarity_emoji} _Common_
+Редкость: {rarity_emoji} _{rarity}_
 У тебя: {chibi_count}"""
                 
                 # Отправляем картинку с текстом
@@ -311,7 +338,8 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                     
             except Exception as e:
                 logger.error(f"Ошибка при отправке чиби: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка при получении чиби. Попробуйте позже.")
+                report_error_to_admin("ChibiError", str(e), message.from_user.first_name)
+                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
 
         @self.bot.message_handler(commands=['task'])
         def task_handler(message):
@@ -340,7 +368,8 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                 
             except Exception as e:
                 logger.error(f"Ошибка при генерации задания: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка при создании задания. Попробуйте позже.")
+                report_error_to_admin("TaskError", str(e), message.from_user.first_name)
+                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
 
         @self.bot.message_handler(commands=['menu'])
         def menu_handler(message):
@@ -367,7 +396,8 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии меню: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка при открытии меню. Попробуйте позже.")
+                report_error_to_admin("MenuError", str(e), message.from_user.first_name)
+                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
 
         # Обработчик callback для кнопок
         @self.bot.callback_query_handler(func=lambda call: True)
@@ -749,7 +779,8 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     
             except Exception as e:
                 logger.error(f"Ошибка в callback: {e}")
-                self.bot.answer_callback_query(call.id, "❌ Ошибка!")
+                report_error_to_admin("CallbackError", str(e), call.from_user.first_name)
+                self.bot.answer_callback_query(call.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
 
     def run(self):
         logger.info("🤖 Чиби-бот запущен!")
