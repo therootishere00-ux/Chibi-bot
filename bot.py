@@ -19,6 +19,7 @@ class ChibiBot:
         self.users = {}  # Храним в памяти
         self.used_ids = set()
         self.user_chibis = {}  # Храним чибиков пользователей: {user_id: [chibi_name1, chibi_name2, ...]}
+        self.user_items = {}   # Храним предметы пользователей: {user_id: {"🧧 Чиби-пак": 1}}
         
     def generate_unique_user_id(self):
         attempts = 0
@@ -53,42 +54,29 @@ class ChibiBot:
             self.users[telegram_id_str] = user_data
             # Инициализируем коллекцию чибиков для нового пользователя
             self.user_chibis[telegram_id_str] = []
+            # Инициализируем предметы и выдаем бесплатный Чиби-пак
+            self.user_items[telegram_id_str] = {"🧧 Чиби-пак": 1}
             logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
 
-    def get_chibi_image_path(self, chibi_name):
-        """Получает путь к картинке чибика по имени"""
-        chibi_folder = "chibis/common"
-        
-        # Ищем файл с таким именем (игнорируем регистр и заменяем пробелы на _)
-        search_name = chibi_name.replace(' ', '_').lower()
-        
-        if not os.path.exists(chibi_folder):
-            return None
-        
-        for file in os.listdir(chibi_folder):
-            if file.lower().endswith('.png'):
-                file_name = os.path.splitext(file)[0].replace('_', ' ').lower()
-                if file_name == search_name:
-                    return os.path.join(chibi_folder, file)
-        
-        return None
-
-    def get_random_chibi(self):
-        """Получает случайный чиби из папки common"""
-        chibi_folder = "chibis/common"
+    def get_random_chibi(self, from_pack=False):
+        """Получает случайный чиби из папки common или secret"""
+        if from_pack and random.random() <= 0.05:  # 5% шанс на секретного чибика из пака
+            chibi_folder = "chibis/secret"
+        else:
+            chibi_folder = "chibis/common"
         
         # Проверяем существование папки
         if not os.path.exists(chibi_folder):
             logger.error(f"Папка {chibi_folder} не найдена!")
-            return None, None
+            return None, None, "Common"
         
         # Получаем список PNG файлов
         chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
         
         if not chibi_files:
             logger.error(f"В папке {chibi_folder} нет PNG файлов!")
-            return None, None
+            return None, None, "Common"
         
         # Выбираем случайный файл
         random_file = random.choice(chibi_files)
@@ -98,7 +86,17 @@ class ChibiBot:
         file_name = os.path.splitext(random_file)[0]  # Убираем расширение
         formatted_name = file_name.replace('_', ' ')  # Заменяем _ на пробелы
         
-        return file_path, formatted_name
+        # Определяем редкость
+        rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
+        
+        return file_path, formatted_name, rarity
+
+    def get_chibi_count(self, telegram_id, chibi_name):
+        """Получает количество конкретного чибика у пользователя"""
+        telegram_id_str = str(telegram_id)
+        if telegram_id_str not in self.user_chibis:
+            return 0
+        return self.user_chibis[telegram_id_str].count(chibi_name)
 
     def generate_task(self):
         """Генерирует случайное задание"""
@@ -116,9 +114,12 @@ class ChibiBot:
         ]
         
         # Получаем случайный чибик для задания
-        _, chibi_name = self.get_random_chibi()
+        _, chibi_name, _ = self.get_random_chibi()
         if chibi_name is None:
             chibi_name = "редкого чибика"  # Запасной вариант
+        
+        # Случайная награда
+        reward = random.randint(32, 49)
         
         # Выбираем случайные элементы
         emoji = random.choice(emojis)
@@ -127,12 +128,14 @@ class ChibiBot:
         
         # Формируем текст задания
         task_text = f"""*{emoji} {name}*
-_{phrase}_"""
+_{phrase}_
+||•••••••••••••••••••||
+Дам *💰 {reward}* за {chibi_name}"""
         
         return task_text, emoji
 
     def get_user_chibis_paginated(self, telegram_id, page=1, per_page=8):
-        """Получает чибиков пользователя с пагинацией, отсортированные по количеству"""
+        """Получает чибиков пользователя с пагинацией"""
         telegram_id_str = str(telegram_id)
         if telegram_id_str not in self.user_chibis:
             self.user_chibis[telegram_id_str] = []
@@ -147,7 +150,7 @@ _{phrase}_"""
         # Сортируем по количеству (от большего к меньшему), затем по алфавиту
         sorted_chibis = sorted(
             [(name, count) for name, count in chibi_counts.items()],
-            key=lambda x: (-x[1], x[0])  # Сначала по количеству (убывание), затем по имени
+            key=lambda x: (-x[1], x[0])  # Сначала по количеству (убывание), потом по имени
         )
         
         # Пагинация
@@ -158,14 +161,34 @@ _{phrase}_"""
         end_idx = start_idx + per_page
         page_chibis = sorted_chibis[start_idx:end_idx]
         
-        return page_chibis, page, total_pages, sorted_chibis
+        return page_chibis, page, total_pages
 
-    def get_chibi_index_in_collection(self, chibi_name, sorted_chibis):
-        """Получает индекс чибика в отсортированной коллекции"""
-        for i, (name, count) in enumerate(sorted_chibis):
-            if name == chibi_name:
-                return i
-        return -1
+    def get_user_items_paginated(self, telegram_id, page=1, per_page=8):
+        """Получает предметы пользователя с пагинацией"""
+        telegram_id_str = str(telegram_id)
+        if telegram_id_str not in self.user_items:
+            self.user_items[telegram_id_str] = {}
+        
+        items = self.user_items[telegram_id_str]
+        
+        # Фильтруем предметы с количеством > 0
+        active_items = {name: count for name, count in items.items() if count > 0}
+        
+        # Сортируем по количеству (от большего к меньшему), затем по алфавиту
+        sorted_items = sorted(
+            [(name, count) for name, count in active_items.items()],
+            key=lambda x: (-x[1], x[0])  # Сначала по количеству (убывание), потом по имени
+        )
+        
+        # Пагинация
+        total_pages = max(1, (len(sorted_items) + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+        
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        page_items = sorted_items[start_idx:end_idx]
+        
+        return page_items, page, total_pages
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -222,7 +245,7 @@ _{phrase}_"""
         @self.bot.message_handler(commands=['chibi'])
         def chibi_handler(message):
             try:
-                file_path, chibi_name = self.get_random_chibi()
+                file_path, chibi_name, rarity = self.get_random_chibi(from_pack=False)
                 
                 if file_path is None:
                     self.bot.send_message(message.chat.id, "❌ Чиби временно недоступны. Попробуйте позже.")
@@ -234,11 +257,16 @@ _{phrase}_"""
                     self.user_chibis[telegram_id_str] = []
                 self.user_chibis[telegram_id_str].append(chibi_name)
                 
+                # Получаем количество этого чибика у пользователя
+                chibi_count = self.get_chibi_count(message.from_user.id, chibi_name)
+                
                 # Формируем текст сообщения
-                chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!* 
-_Надеюсь, он тебе понравился! Приходи еще через 3ч 59м_ 
-
-Редкость: 🔷 _Common_"""
+                rarity_emoji = "🔷" if rarity == "Common" else "💠"
+                chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
+Надеюсь, он тебе понравился! Приходи еще через *3ч 59м*
+||•••••••••••••••••••||
+Редкость: {rarity_emoji} {rarity}
+У тебя: {chibi_count}"""
                 
                 # Отправляем картинку с текстом
                 with open(file_path, 'rb') as photo:
@@ -249,7 +277,7 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                         parse_mode='Markdown'
                     )
                     
-                logger.info(f"Отправлен чиби: {chibi_name}")
+                logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
                     
             except Exception as e:
                 logger.error(f"Ошибка при отправке чиби: {e}")
@@ -375,7 +403,7 @@ _Выбери, на какой раздел склада хочешь гляну
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     btn_chibis = types.InlineKeyboardButton("Чибики", callback_data="warehouse_chibis_1")
-                    btn_items = types.InlineKeyboardButton("Предметы", callback_data="warehouse_items")
+                    btn_items = types.InlineKeyboardButton("Предметы", callback_data="warehouse_items_1")
                     btn_back = types.InlineKeyboardButton("Назад", callback_data="menu_back")
                     
                     markup.add(btn_chibis, btn_items)
@@ -392,7 +420,7 @@ _Выбери, на какой раздел склада хочешь гляну
                 elif call.data.startswith("warehouse_chibis_"):
                     # Показываем коллекцию чибиков
                     page = int(call.data.split("_")[2])
-                    chibis, current_page, total_pages, all_chibis = self.get_user_chibis_paginated(call.from_user.id, page)
+                    chibis, current_page, total_pages = self.get_user_chibis_paginated(call.from_user.id, page)
                     
                     chibis_text = f"""📦 *Твои чибики*
 _Великолепные и неповторимые. Ну, почти…
@@ -407,7 +435,7 @@ _Великолепные и неповторимые. Ну, почти…
                                 btn_text = f"{chibi_name} ({count})"
                             else:
                                 btn_text = chibi_name
-                            markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"view_chibi_{chibi_name}"))
+                            markup.add(types.InlineKeyboardButton(btn_text, callback_data="chibi_click"))
                     else:
                         markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
                     
@@ -431,46 +459,166 @@ _Великолепные и неповторимые. Ну, почти…
                         parse_mode='Markdown'
                     )
                     
-                elif call.data.startswith("view_chibi_"):
-                    # Показываем картинку чибика
-                    chibi_name = call.data[11:]
-                    chibi_path = self.get_chibi_image_path(chibi_name)
+                elif call.data.startswith("warehouse_items_"):
+                    # Показываем коллекцию предметов
+                    page = int(call.data.split("_")[2])
+                    items, current_page, total_pages = self.get_user_items_paginated(call.from_user.id, page)
                     
-                    if chibi_path and os.path.exists(chibi_path):
-                        # Получаем всю коллекцию для навигации
-                        _, _, _, all_chibis = self.get_user_chibis_paginated(call.from_user.id)
-                        current_index = self.get_chibi_index_in_collection(chibi_name, all_chibis)
-                        
-                        if current_index != -1:
-                            # Формируем текст и кнопки навигации
-                            caption = f"""*Твой чибик — {chibi_name}* 
-_Можешь рассмотреть. Мы долго их рисовали!_"""
-                            
-                            markup = types.InlineKeyboardMarkup()
-                            prev_index = (current_index - 1) % len(all_chibis)
-                            next_index = (current_index + 1) % len(all_chibis)
-                            
-                            btn_prev = types.InlineKeyboardButton("◀️", callback_data=f"view_chibi_{all_chibis[prev_index][0]}")
-                            btn_back = types.InlineKeyboardButton("Коллекция", callback_data="warehouse_chibis_1")
-                            btn_next = types.InlineKeyboardButton("▶️", callback_data=f"view_chibi_{all_chibis[next_index][0]}")
-                            
-                            markup.row(btn_prev, btn_back, btn_next)
-                            
-                            # Отправляем фото с кнопками навигации
-                            with open(chibi_path, 'rb') as photo:
-                                self.bot.edit_message_media(
-                                    types.InputMediaPhoto(photo, caption=caption, parse_mode='Markdown'),
-                                    call.message.chat.id,
-                                    call.message.message_id,
-                                    reply_markup=markup
-                                )
-                        else:
-                            self.bot.answer_callback_query(call.id, "Ошибка: чибик не найден в коллекции!")
+                    items_text = f"""*📦 Твои предметы* 
+_Тут хранятся твои боксы. Других предметов в боте пока и нет…
+Страница {current_page}/{total_pages}_"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    
+                    # Добавляем кнопки предметов
+                    if items:
+                        for item_name, count in items:
+                            if count > 1:
+                                btn_text = f"{item_name} ({count})"
+                            else:
+                                btn_text = item_name
+                            if item_name == "🧧 Чиби-пак":
+                                markup.add(types.InlineKeyboardButton(btn_text, callback_data="open_chibi_pack"))
+                            else:
+                                markup.add(types.InlineKeyboardButton(btn_text, callback_data="item_click"))
                     else:
-                        self.bot.answer_callback_query(call.id, "Картинка чибика не найдена!")
+                        markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
                     
-                elif call.data == "warehouse_items":
-                    self.bot.answer_callback_query(call.id, "Раздел 'Предметы' пока пуст!")
+                    # Добавляем навигацию
+                    nav_buttons = []
+                    if total_pages > 1:
+                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_items_{((current_page-2) % total_pages) + 1}"))
+                    
+                    nav_buttons.append(types.InlineKeyboardButton("Назад", callback_data="menu_warehouse"))
+                    
+                    if total_pages > 1:
+                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"warehouse_items_{(current_page % total_pages) + 1}"))
+                    
+                    markup.row(*nav_buttons)
+                    
+                    self.bot.edit_message_text(
+                        items_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data == "open_chibi_pack":
+                    # Подтверждение открытия Чиби-пака
+                    telegram_id_str = str(call.from_user.id)
+                    pack_count = self.user_items.get(telegram_id_str, {}).get("🧧 Чиби-пак", 0)
+                    
+                    confirm_text = f"""*Ты точно хочешь открыть 🧧 Чиби-пак?*
+_Хотя что тебе еще делать с ним? Разве что повесить на стену и любоваться_"""
+                    
+                    markup = types.InlineKeyboardMarkup(row_width=2)
+                    
+                    if pack_count == 1:
+                        btn_open1 = types.InlineKeyboardButton("Открыть х1", callback_data="open_pack_1")
+                        markup.add(btn_open1)
+                    else:
+                        btn_open1 = types.InlineKeyboardButton("Открыть х1", callback_data="open_pack_1")
+                        btn_open_all = types.InlineKeyboardButton(f"Открыть х{pack_count}", callback_data=f"open_pack_{pack_count}")
+                        markup.add(btn_open1, btn_open_all)
+                    
+                    btn_back = types.InlineKeyboardButton("Назад", callback_data="warehouse_items_1")
+                    markup.add(btn_back)
+                    
+                    self.bot.edit_message_text(
+                        confirm_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data.startswith("open_pack_"):
+                    # Открываем Чиби-пак
+                    count = int(call.data.split("_")[2])
+                    telegram_id_str = str(call.from_user.id)
+                    
+                    # Проверяем, есть ли достаточно паков
+                    current_packs = self.user_items.get(telegram_id_str, {}).get("🧧 Чиби-пак", 0)
+                    if current_packs < count:
+                        self.bot.answer_callback_query(call.id, "Недостаточно Чиби-паков!")
+                        return
+                    
+                    # Уменьшаем количество паков
+                    self.user_items[telegram_id_str]["🧧 Чиби-пак"] = current_packs - count
+                    
+                    # Открываем паки и получаем чибиков
+                    for i in range(count):
+                        file_path, chibi_name, rarity = self.get_random_chibi(from_pack=True)
+                        
+                        if file_path is not None:
+                            # Добавляем чибика в коллекцию пользователя
+                            if telegram_id_str not in self.user_chibis:
+                                self.user_chibis[telegram_id_str] = []
+                            self.user_chibis[telegram_id_str].append(chibi_name)
+                            
+                            # Получаем количество этого чибика у пользователя
+                            chibi_count = self.get_chibi_count(call.from_user.id, chibi_name)
+                            
+                            # Формируем текст сообщения для выпавшего чибика
+                            rarity_emoji = "🔷" if rarity == "Common" else "💠"
+                            chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
+Надеюсь, он тебе понравился!
+||•••••••••••••••••••||
+Редкость: {rarity_emoji} {rarity}
+У тебя: {chibi_count}"""
+                            
+                            # Отправляем картинку с текстом
+                            with open(file_path, 'rb') as photo:
+                                self.bot.send_photo(
+                                    call.message.chat.id,
+                                    photo,
+                                    caption=chibi_text,
+                                    parse_mode='Markdown'
+                                )
+                    
+                    self.bot.answer_callback_query(call.id, f"Открыто {count} Чиби-пак(ов)!")
+                    
+                    # Возвращаемся к предметам
+                    items, current_page, total_pages = self.get_user_items_paginated(call.from_user.id, 1)
+                    
+                    items_text = f"""*📦 Твои предметы* 
+_Тут хранятся твои боксы. Других предметов в боте пока и нет…
+Страница {current_page}/{total_pages}_"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    
+                    if items:
+                        for item_name, count in items:
+                            if count > 1:
+                                btn_text = f"{item_name} ({count})"
+                            else:
+                                btn_text = item_name
+                            if item_name == "🧧 Чиби-пак":
+                                markup.add(types.InlineKeyboardButton(btn_text, callback_data="open_chibi_pack"))
+                            else:
+                                markup.add(types.InlineKeyboardButton(btn_text, callback_data="item_click"))
+                    else:
+                        markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
+                    
+                    nav_buttons = []
+                    if total_pages > 1:
+                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_items_{((current_page-2) % total_pages) + 1}"))
+                    
+                    nav_buttons.append(types.InlineKeyboardButton("Назад", callback_data="menu_warehouse"))
+                    
+                    if total_pages > 1:
+                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"warehouse_items_{(current_page % total_pages) + 1}"))
+                    
+                    markup.row(*nav_buttons)
+                    
+                    self.bot.edit_message_text(
+                        items_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
                     
                 elif call.data == "menu_back":
                     # Возвращаемся к главному меню
@@ -496,8 +644,15 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 elif call.data == "menu_bonus":
                     self.bot.answer_callback_query(call.id, "Ежедневный бонус пока недоступен!")
                     
+                elif call.data == "chibi_click":
+                    # При нажатии на чибика ничего не происходит
+                    self.bot.answer_callback_query(call.id)
+                    
+                elif call.data == "item_click":
+                    self.bot.answer_callback_query(call.id, "Этот предмет нельзя использовать!")
+                    
                 elif call.data == "empty":
-                    self.bot.answer_callback_query(call.id, "У тебя пока нет чибиков!")
+                    self.bot.answer_callback_query(call.id, "Здесь пусто!")
                     
                 else:
                     self.bot.answer_callback_query(call.id)
