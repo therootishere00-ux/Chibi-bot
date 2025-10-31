@@ -20,6 +20,8 @@ class ChibiBot:
         self.used_ids = set()
         self.user_chibis = {}  # Храним чибиков пользователей: {user_id: [chibi_name1, chibi_name2, ...]}
         self.user_items = {}   # Храним предметы пользователей: {user_id: {"🧧 Чиби-пак": 1}}
+        self.user_tasks = {}   # Храним текущие задания пользователей: {user_id: {"chibi": "имя", "reward": 35, "emoji": "🐊", "name": "Грирт"}}
+        self.user_coins = {}   # Храним коины пользователей: {user_id: 0}
         
     def generate_unique_user_id(self):
         attempts = 0
@@ -56,6 +58,8 @@ class ChibiBot:
             self.user_chibis[telegram_id_str] = []
             # Инициализируем предметы и выдаем бесплатный Чиби-пак
             self.user_items[telegram_id_str] = {"🧧 Чиби-пак": 1}
+            # Инициализируем коины
+            self.user_coins[telegram_id_str] = 0
             logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
 
@@ -98,8 +102,15 @@ class ChibiBot:
             return 0
         return self.user_chibis[telegram_id_str].count(chibi_name)
 
-    def generate_task(self):
-        """Генерирует случайное задание"""
+    def generate_task(self, telegram_id):
+        """Генерирует случайное задание для пользователя"""
+        telegram_id_str = str(telegram_id)
+        
+        # Если у пользователя уже есть активное задание, возвращаем его
+        if telegram_id_str in self.user_tasks and self.user_tasks[telegram_id_str] is not None:
+            return self.user_tasks[telegram_id_str]
+        
+        # Создаем новое задание
         # Случайные эмодзи
         emojis = ['🐊', '🐸', '🤖', '⛄️', '🐲', '👽']
         
@@ -126,13 +137,32 @@ class ChibiBot:
         name = random.choice(names)
         phrase = random.choice(phrases).format(chibi=f"*{chibi_name}*")  # Жирный шрифт для названия чибика
         
-        # Формируем текст задания
-        task_text = f"""*{emoji} {name}*
-_{phrase}_
-||•••••••••••••••••••||
-Дам *💰 {reward}* за {chibi_name}"""
+        # Сохраняем задание для пользователя
+        task_data = {
+            "chibi": chibi_name,
+            "reward": reward,
+            "emoji": emoji,
+            "name": name,
+            "phrase": phrase
+        }
         
-        return task_text, emoji
+        self.user_tasks[telegram_id_str] = task_data
+        return task_data
+
+    def get_task_text(self, task_data, telegram_id):
+        """Формирует текст задания с проверкой выполнения"""
+        telegram_id_str = str(telegram_id)
+        
+        # Проверяем, есть ли у пользователя нужный чибик
+        has_chibi = self.get_chibi_count(telegram_id, task_data["chibi"]) > 0
+        button_text = "✅ Сдать задание (1/1)" if has_chibi else "Сдать задание (0/1)"
+        
+        task_text = f"""*{task_data['emoji']} {task_data['name']}*
+_{task_data['phrase']}_
+`•••••••••••••••••••`
+Дам *💰 {task_data['reward']}* за {task_data['chibi']}"""
+        
+        return task_text, button_text, has_chibi
 
     def get_user_chibis_paginated(self, telegram_id, page=1, per_page=8):
         """Получает чибиков пользователя с пагинацией"""
@@ -263,9 +293,9 @@ _{phrase}_
                 # Формируем текст сообщения
                 rarity_emoji = "🔷" if rarity == "Common" else "💠"
                 chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
-Надеюсь, он тебе понравился! Приходи еще через *3ч 59м*
-||•••••••••••••••••••||
-Редкость: {rarity_emoji} {rarity}
+_Надеюсь, он тебе понравился! Приходи еще через *3ч 59м*_
+`•••••••••••••••••••`
+Редкость: {rarity_emoji} _Common_
 У тебя: {chibi_count}"""
                 
                 # Отправляем картинку с текстом
@@ -286,13 +316,14 @@ _{phrase}_
         @self.bot.message_handler(commands=['task'])
         def task_handler(message):
             try:
-                task_text, emoji = self.generate_task()
+                task_data = self.generate_task(message.from_user.id)
+                task_text, button_text, has_chibi = self.get_task_text(task_data, message.from_user.id)
                 
                 # Создаем инлайн-кнопки
                 markup = types.InlineKeyboardMarkup(row_width=2)
                 btn_complete = types.InlineKeyboardButton(
-                    "Сдать задание (0/1)", 
-                    callback_data="task_complete"
+                    button_text, 
+                    callback_data="task_complete" if has_chibi else "task_cannot_complete"
                 )
                 btn_skip = types.InlineKeyboardButton(
                     "Пропустить", 
@@ -300,7 +331,6 @@ _{phrase}_
                 )
                 markup.add(btn_complete, btn_skip)
                 
-                # Сохраняем emoji для подтверждения пропуска
                 self.bot.send_message(
                     message.chat.id,
                     task_text,
@@ -344,20 +374,74 @@ _Здесь ты найдешь все, что нужно, но не имеет 
         def callback_handler(call):
             try:
                 if call.data == "task_complete":
-                    self.bot.answer_callback_query(call.id, "Задание пока нельзя сдать!")
+                    # Выполняем задание
+                    telegram_id_str = str(call.from_user.id)
+                    if telegram_id_str not in self.user_tasks or self.user_tasks[telegram_id_str] is None:
+                        self.bot.answer_callback_query(call.id, "Задание уже выполнено!")
+                        return
+                    
+                    task_data = self.user_tasks[telegram_id_str]
+                    
+                    # Удаляем сообщение с заданием
+                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
+                    
+                    # Отправляем стикер
+                    sticker_id = "CAACAgIAAxkBAAE9Js9pAzTWs9gLLtl9Gqz_9V_4sbwXqgAC7EYAAjNREEqhVSL_nxyHZTYE"
+                    self.bot.send_sticker(call.message.chat.id, sticker_id)
+                    
+                    # Начисляем награду
+                    reward = task_data["reward"]
+                    if telegram_id_str not in self.user_coins:
+                        self.user_coins[telegram_id_str] = 0
+                    self.user_coins[telegram_id_str] += reward
+                    
+                    # Отправляем сообщение о выполнении
+                    user_nick = call.from_user.first_name or "путешественник"
+                    complete_text = f"""*Ес! {user_nick}, ты выполнил таск!*
+_За это ты получаешь обещанную награду. Даже не буду гадать, сколько ты выбивал нужного чибика_
+`•••••••••••••••`
++ 💰*{reward}* коинов"""
+                    
+                    self.bot.send_message(
+                        call.message.chat.id,
+                        complete_text,
+                        parse_mode='Markdown'
+                    )
+                    
+                    # Удаляем задание
+                    self.user_tasks[telegram_id_str] = None
+                    
+                elif call.data == "task_cannot_complete":
+                    self.bot.answer_callback_query(call.id, "У тебя нет нужного чибика!")
                     
                 elif call.data == "task_skip":
-                    # Пропускаем задание (удаляем сообщение)
-                    self.bot.answer_callback_query(call.id, "Задание пропущено!")
+                    # Пропускаем задание
+                    telegram_id_str = str(call.from_user.id)
+                    self.user_tasks[telegram_id_str] = None  # Удаляем задание
+                    
+                    # Удаляем сообщение с заданием
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
+                    
+                    # Отправляем сообщение о пропуске
+                    skip_text = """✨*Ты пропустил таск. Жди новый!*
+_Осталось 8ч 59м_"""
+                    
+                    self.bot.send_message(
+                        call.message.chat.id,
+                        skip_text,
+                        parse_mode='Markdown'
+                    )
                     
                 elif call.data == "task_skip_confirm":
                     # Подтверждение пропуска задания
-                    # Извлекаем emoji из текста сообщения
-                    message_text = call.message.text
-                    emoji = message_text.split(' ')[0]  # Первый символ - emoji
+                    telegram_id_str = str(call.from_user.id)
+                    if telegram_id_str not in self.user_tasks or self.user_tasks[telegram_id_str] is None:
+                        self.bot.answer_callback_query(call.id, "Нет активного задания!")
+                        return
                     
-                    skip_text = f"""{emoji}* Ты точно хочешь пропустить задание?*
+                    task_data = self.user_tasks[telegram_id_str]
+                    
+                    skip_text = f"""{task_data['emoji']}* Ты точно хочешь пропустить задание?*
 _Придется долго ждать следующее, но пропуск бесплатный_"""
                     
                     markup = types.InlineKeyboardMarkup()
@@ -375,12 +459,18 @@ _Придется долго ждать следующее, но пропуск 
                     
                 elif call.data == "task_back":
                     # Возвращаемся к заданию
-                    task_text, _ = self.generate_task()
+                    telegram_id_str = str(call.from_user.id)
+                    if telegram_id_str not in self.user_tasks or self.user_tasks[telegram_id_str] is None:
+                        self.bot.answer_callback_query(call.id, "Нет активного задания!")
+                        return
+                    
+                    task_data = self.user_tasks[telegram_id_str]
+                    task_text, button_text, has_chibi = self.get_task_text(task_data, call.from_user.id)
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     btn_complete = types.InlineKeyboardButton(
-                        "Сдать задание (0/1)", 
-                        callback_data="task_complete"
+                        button_text, 
+                        callback_data="task_complete" if has_chibi else "task_cannot_complete"
                     )
                     btn_skip = types.InlineKeyboardButton(
                         "Пропустить", 
@@ -563,9 +653,9 @@ _Хотя что тебе еще делать с ним? Разве что по�
                             # Формируем текст сообщения для выпавшего чибика
                             rarity_emoji = "🔷" if rarity == "Common" else "💠"
                             chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
-Надеюсь, он тебе понравился!
-||•••••••••••••••••••||
-Редкость: {rarity_emoji} {rarity}
+_Надеюсь, он тебе понравился!_
+`•••••••••••••••••••`
+Редкость: {rarity_emoji} _{rarity}_
 У тебя: {chibi_count}"""
                             
                             # Отправляем картинку с текстом
