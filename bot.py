@@ -82,6 +82,26 @@ class ChibiBot:
         
         return file_path, formatted_name
 
+    def get_chibi_image_path(self, chibi_name):
+        """Получает путь к изображению чибика по имени"""
+        chibi_folder = "chibis/common"
+        
+        # Ищем файл с таким именем (с учетом пробелов и подчеркиваний)
+        search_name = chibi_name.replace(' ', '_')
+        
+        for file in os.listdir(chibi_folder):
+            if file.lower().endswith('.png'):
+                file_name_without_ext = os.path.splitext(file)[0]
+                if file_name_without_ext == search_name:
+                    return os.path.join(chibi_folder, file)
+        
+        # Если не нашли, возвращаем первый доступный
+        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
+        if chibi_files:
+            return os.path.join(chibi_folder, chibi_files[0])
+        
+        return None
+
     def generate_task(self):
         """Генерирует случайное задание"""
         # Случайные эмодзи
@@ -126,8 +146,8 @@ _{phrase}_"""
         for chibi in chibis:
             chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
         
-        # Сортируем по алфавиту и создаем список с количеством
-        sorted_chibis = sorted([(name, count) for name, count in chibi_counts.items()])
+        # Сортируем по количеству (от большего к меньшему), затем по алфавиту
+        sorted_chibis = sorted(chibi_counts.items(), key=lambda x: (-x[1], x[0]))
         
         # Пагинация
         total_pages = max(1, (len(sorted_chibis) + per_page - 1) // per_page)
@@ -138,6 +158,32 @@ _{phrase}_"""
         page_chibis = sorted_chibis[start_idx:end_idx]
         
         return page_chibis, page, total_pages
+
+    def get_user_chibis_list(self, telegram_id):
+        """Получает список всех чибиков пользователя (сортированный)"""
+        telegram_id_str = str(telegram_id)
+        if telegram_id_str not in self.user_chibis:
+            return []
+        
+        chibis = self.user_chibis[telegram_id_str]
+        
+        # Подсчитываем количество каждого чибика
+        chibi_counts = {}
+        for chibi in chibis:
+            chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
+        
+        # Сортируем по количеству (от большего к меньшему), затем по алфавиту
+        sorted_chibis = sorted(chibi_counts.items(), key=lambda x: (-x[1], x[0]))
+        
+        return [chibi[0] for chibi in sorted_chibis]
+
+    def get_chibi_index(self, telegram_id, chibi_name):
+        """Получает индекс чибика в коллекции пользователя"""
+        chibis_list = self.get_user_chibis_list(telegram_id)
+        try:
+            return chibis_list.index(chibi_name)
+        except ValueError:
+            return -1
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -379,7 +425,7 @@ _Великолепные и неповторимые. Ну, почти…
                                 btn_text = f"{chibi_name} ({count})"
                             else:
                                 btn_text = chibi_name
-                            markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"chibi_info_{chibi_name}"))
+                            markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"view_chibi_{chibi_name}"))
                     else:
                         markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
                     
@@ -402,6 +448,52 @@ _Великолепные и неповторимые. Ну, почти…
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
+                    
+                elif call.data.startswith("view_chibi_"):
+                    # Показываем картинку чибика
+                    chibi_name = call.data[11:]
+                    chibi_list = self.get_user_chibis_list(call.from_user.id)
+                    
+                    if not chibi_list:
+                        self.bot.answer_callback_query(call.id, "У тебя нет чибиков!")
+                        return
+                    
+                    current_index = self.get_chibi_index(call.from_user.id, chibi_name)
+                    if current_index == -1:
+                        self.bot.answer_callback_query(call.id, "Чибик не найден!")
+                        return
+                    
+                    # Получаем путь к изображению
+                    image_path = self.get_chibi_image_path(chibi_name)
+                    
+                    if image_path and os.path.exists(image_path):
+                        # Отправляем фото с кнопками навигации
+                        chibi_text = f"""*Твой чибик — {chibi_name}* 
+_Можешь рассмотреть. Мы долго их рисовали!_"""
+                        
+                        markup = types.InlineKeyboardMarkup()
+                        prev_index = (current_index - 1) % len(chibi_list)
+                        next_index = (current_index + 1) % len(chibi_list)
+                        
+                        btn_prev = types.InlineKeyboardButton("◀️", callback_data=f"view_chibi_{chibi_list[prev_index]}")
+                        btn_collection = types.InlineKeyboardButton("Коллекция", callback_data="warehouse_chibis_1")
+                        btn_next = types.InlineKeyboardButton("▶️", callback_data=f"view_chibi_{chibi_list[next_index]}")
+                        
+                        markup.row(btn_prev, btn_collection, btn_next)
+                        
+                        with open(image_path, 'rb') as photo:
+                            self.bot.send_photo(
+                                call.message.chat.id,
+                                photo,
+                                caption=chibi_text,
+                                reply_markup=markup,
+                                parse_mode='Markdown'
+                            )
+                        
+                        # Удаляем старое сообщение
+                        self.bot.delete_message(call.message.chat.id, call.message.message_id)
+                    else:
+                        self.bot.answer_callback_query(call.id, "Изображение не найдено!")
                     
                 elif call.data == "warehouse_items":
                     self.bot.answer_callback_query(call.id, "Раздел 'Предметы' пока пуст!")
@@ -429,10 +521,6 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     
                 elif call.data == "menu_bonus":
                     self.bot.answer_callback_query(call.id, "Ежедневный бонус пока недоступен!")
-                    
-                elif call.data.startswith("chibi_info_"):
-                    chibi_name = call.data[11:]
-                    self.bot.answer_callback_query(call.id, f"Информация о {chibi_name}")
                     
                 elif call.data == "empty":
                     self.bot.answer_callback_query(call.id, "У тебя пока нет чибиков!")
