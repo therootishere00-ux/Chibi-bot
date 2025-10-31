@@ -56,6 +56,24 @@ class ChibiBot:
             logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
 
+    def get_chibi_image_path(self, chibi_name):
+        """Получает путь к картинке чибика по имени"""
+        chibi_folder = "chibis/common"
+        
+        # Ищем файл с таким именем (игнорируем регистр и заменяем пробелы на _)
+        search_name = chibi_name.replace(' ', '_').lower()
+        
+        if not os.path.exists(chibi_folder):
+            return None
+        
+        for file in os.listdir(chibi_folder):
+            if file.lower().endswith('.png'):
+                file_name = os.path.splitext(file)[0].replace('_', ' ').lower()
+                if file_name == search_name:
+                    return os.path.join(chibi_folder, file)
+        
+        return None
+
     def get_random_chibi(self):
         """Получает случайный чиби из папки common"""
         chibi_folder = "chibis/common"
@@ -81,26 +99,6 @@ class ChibiBot:
         formatted_name = file_name.replace('_', ' ')  # Заменяем _ на пробелы
         
         return file_path, formatted_name
-
-    def get_chibi_image_path(self, chibi_name):
-        """Получает путь к изображению чибика по имени"""
-        chibi_folder = "chibis/common"
-        
-        # Ищем файл с таким именем (с учетом пробелов и подчеркиваний)
-        search_name = chibi_name.replace(' ', '_')
-        
-        for file in os.listdir(chibi_folder):
-            if file.lower().endswith('.png'):
-                file_name_without_ext = os.path.splitext(file)[0]
-                if file_name_without_ext == search_name:
-                    return os.path.join(chibi_folder, file)
-        
-        # Если не нашли, возвращаем первый доступный
-        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
-        if chibi_files:
-            return os.path.join(chibi_folder, chibi_files[0])
-        
-        return None
 
     def generate_task(self):
         """Генерирует случайное задание"""
@@ -134,7 +132,7 @@ _{phrase}_"""
         return task_text, emoji
 
     def get_user_chibis_paginated(self, telegram_id, page=1, per_page=8):
-        """Получает чибиков пользователя с пагинацией"""
+        """Получает чибиков пользователя с пагинацией, отсортированные по количеству"""
         telegram_id_str = str(telegram_id)
         if telegram_id_str not in self.user_chibis:
             self.user_chibis[telegram_id_str] = []
@@ -147,7 +145,10 @@ _{phrase}_"""
             chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
         
         # Сортируем по количеству (от большего к меньшему), затем по алфавиту
-        sorted_chibis = sorted(chibi_counts.items(), key=lambda x: (-x[1], x[0]))
+        sorted_chibis = sorted(
+            [(name, count) for name, count in chibi_counts.items()],
+            key=lambda x: (-x[1], x[0])  # Сначала по количеству (убывание), затем по имени
+        )
         
         # Пагинация
         total_pages = max(1, (len(sorted_chibis) + per_page - 1) // per_page)
@@ -157,33 +158,14 @@ _{phrase}_"""
         end_idx = start_idx + per_page
         page_chibis = sorted_chibis[start_idx:end_idx]
         
-        return page_chibis, page, total_pages
+        return page_chibis, page, total_pages, sorted_chibis
 
-    def get_user_chibis_list(self, telegram_id):
-        """Получает список всех чибиков пользователя (сортированный)"""
-        telegram_id_str = str(telegram_id)
-        if telegram_id_str not in self.user_chibis:
-            return []
-        
-        chibis = self.user_chibis[telegram_id_str]
-        
-        # Подсчитываем количество каждого чибика
-        chibi_counts = {}
-        for chibi in chibis:
-            chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
-        
-        # Сортируем по количеству (от большего к меньшему), затем по алфавиту
-        sorted_chibis = sorted(chibi_counts.items(), key=lambda x: (-x[1], x[0]))
-        
-        return [chibi[0] for chibi in sorted_chibis]
-
-    def get_chibi_index(self, telegram_id, chibi_name):
-        """Получает индекс чибика в коллекции пользователя"""
-        chibis_list = self.get_user_chibis_list(telegram_id)
-        try:
-            return chibis_list.index(chibi_name)
-        except ValueError:
-            return -1
+    def get_chibi_index_in_collection(self, chibi_name, sorted_chibis):
+        """Получает индекс чибика в отсортированной коллекции"""
+        for i, (name, count) in enumerate(sorted_chibis):
+            if name == chibi_name:
+                return i
+        return -1
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -410,7 +392,7 @@ _Выбери, на какой раздел склада хочешь гляну
                 elif call.data.startswith("warehouse_chibis_"):
                     # Показываем коллекцию чибиков
                     page = int(call.data.split("_")[2])
-                    chibis, current_page, total_pages = self.get_user_chibis_paginated(call.from_user.id, page)
+                    chibis, current_page, total_pages, all_chibis = self.get_user_chibis_paginated(call.from_user.id, page)
                     
                     chibis_text = f"""📦 *Твои чибики*
 _Великолепные и неповторимые. Ну, почти…
@@ -452,48 +434,40 @@ _Великолепные и неповторимые. Ну, почти…
                 elif call.data.startswith("view_chibi_"):
                     # Показываем картинку чибика
                     chibi_name = call.data[11:]
-                    chibi_list = self.get_user_chibis_list(call.from_user.id)
+                    chibi_path = self.get_chibi_image_path(chibi_name)
                     
-                    if not chibi_list:
-                        self.bot.answer_callback_query(call.id, "У тебя нет чибиков!")
-                        return
-                    
-                    current_index = self.get_chibi_index(call.from_user.id, chibi_name)
-                    if current_index == -1:
-                        self.bot.answer_callback_query(call.id, "Чибик не найден!")
-                        return
-                    
-                    # Получаем путь к изображению
-                    image_path = self.get_chibi_image_path(chibi_name)
-                    
-                    if image_path and os.path.exists(image_path):
-                        # Отправляем фото с кнопками навигации
-                        chibi_text = f"""*Твой чибик — {chibi_name}* 
+                    if chibi_path and os.path.exists(chibi_path):
+                        # Получаем всю коллекцию для навигации
+                        _, _, _, all_chibis = self.get_user_chibis_paginated(call.from_user.id)
+                        current_index = self.get_chibi_index_in_collection(chibi_name, all_chibis)
+                        
+                        if current_index != -1:
+                            # Формируем текст и кнопки навигации
+                            caption = f"""*Твой чибик — {chibi_name}* 
 _Можешь рассмотреть. Мы долго их рисовали!_"""
-                        
-                        markup = types.InlineKeyboardMarkup()
-                        prev_index = (current_index - 1) % len(chibi_list)
-                        next_index = (current_index + 1) % len(chibi_list)
-                        
-                        btn_prev = types.InlineKeyboardButton("◀️", callback_data=f"view_chibi_{chibi_list[prev_index]}")
-                        btn_collection = types.InlineKeyboardButton("Коллекция", callback_data="warehouse_chibis_1")
-                        btn_next = types.InlineKeyboardButton("▶️", callback_data=f"view_chibi_{chibi_list[next_index]}")
-                        
-                        markup.row(btn_prev, btn_collection, btn_next)
-                        
-                        with open(image_path, 'rb') as photo:
-                            self.bot.send_photo(
-                                call.message.chat.id,
-                                photo,
-                                caption=chibi_text,
-                                reply_markup=markup,
-                                parse_mode='Markdown'
-                            )
-                        
-                        # Удаляем старое сообщение
-                        self.bot.delete_message(call.message.chat.id, call.message.message_id)
+                            
+                            markup = types.InlineKeyboardMarkup()
+                            prev_index = (current_index - 1) % len(all_chibis)
+                            next_index = (current_index + 1) % len(all_chibis)
+                            
+                            btn_prev = types.InlineKeyboardButton("◀️", callback_data=f"view_chibi_{all_chibis[prev_index][0]}")
+                            btn_back = types.InlineKeyboardButton("Коллекция", callback_data="warehouse_chibis_1")
+                            btn_next = types.InlineKeyboardButton("▶️", callback_data=f"view_chibi_{all_chibis[next_index][0]}")
+                            
+                            markup.row(btn_prev, btn_back, btn_next)
+                            
+                            # Отправляем фото с кнопками навигации
+                            with open(chibi_path, 'rb') as photo:
+                                self.bot.edit_message_media(
+                                    types.InputMediaPhoto(photo, caption=caption, parse_mode='Markdown'),
+                                    call.message.chat.id,
+                                    call.message.message_id,
+                                    reply_markup=markup
+                                )
+                        else:
+                            self.bot.answer_callback_query(call.id, "Ошибка: чибик не найден в коллекции!")
                     else:
-                        self.bot.answer_callback_query(call.id, "Изображение не найдено!")
+                        self.bot.answer_callback_query(call.id, "Картинка чибика не найдена!")
                     
                 elif call.data == "warehouse_items":
                     self.bot.answer_callback_query(call.id, "Раздел 'Предметы' пока пуст!")
