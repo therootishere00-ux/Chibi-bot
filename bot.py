@@ -18,6 +18,7 @@ class ChibiBot:
         self.bot = telebot.TeleBot(token)
         self.users = {}  # Храним в памяти
         self.used_ids = set()
+        self.user_chibis = {}  # Храним чибиков пользователей: {user_id: [chibi_name1, chibi_name2, ...]}
         
     def generate_unique_user_id(self):
         attempts = 0
@@ -50,6 +51,8 @@ class ChibiBot:
                 'last_active': datetime.now()
             }
             self.users[telegram_id_str] = user_data
+            # Инициализируем коллекцию чибиков для нового пользователя
+            self.user_chibis[telegram_id_str] = []
             logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
 
@@ -89,9 +92,9 @@ class ChibiBot:
         
         # Случайные реплики
         phrases = [
-            "Эй, ты! Принеси-ка мне *{chibi}*, я щедро тебя награжу!",
-            "Приветствую… Очень хочу заполучить *{chibi}*, если принесешь мне его, в долгу не останусь",
-            "Бурабура, лакуш'н, принеси мне *{chibi}*, я готов платить"
+            "Эй, ты! Принеси-ка мне {chibi}, я щедро тебя награжу!",
+            "Приветствую… Очень хочу заполучить {chibi}, если принесешь мне его, в долгу не останусь",
+            "Бурабура, лакуш'н, принеси мне {chibi}, я готов платить"
         ]
         
         # Получаем случайный чибик для задания
@@ -102,13 +105,39 @@ class ChibiBot:
         # Выбираем случайные элементы
         emoji = random.choice(emojis)
         name = random.choice(names)
-        phrase = random.choice(phrases).format(chibi=chibi_name)
+        phrase = random.choice(phrases).format(chibi=f"*{chibi_name}*")  # Жирный шрифт для названия чибика
         
         # Формируем текст задания
         task_text = f"""*{emoji} {name}*
 _{phrase}_"""
         
-        return task_text
+        return task_text, emoji
+
+    def get_user_chibis_paginated(self, telegram_id, page=1, per_page=8):
+        """Получает чибиков пользователя с пагинацией"""
+        telegram_id_str = str(telegram_id)
+        if telegram_id_str not in self.user_chibis:
+            self.user_chibis[telegram_id_str] = []
+        
+        chibis = self.user_chibis[telegram_id_str]
+        
+        # Подсчитываем количество каждого чибика
+        chibi_counts = {}
+        for chibi in chibis:
+            chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
+        
+        # Сортируем по алфавиту и создаем список с количеством
+        sorted_chibis = sorted([(name, count) for name, count in chibi_counts.items()])
+        
+        # Пагинация
+        total_pages = max(1, (len(sorted_chibis) + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+        
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        page_chibis = sorted_chibis[start_idx:end_idx]
+        
+        return page_chibis, page, total_pages
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -171,6 +200,12 @@ _{phrase}_"""
                     self.bot.send_message(message.chat.id, "❌ Чиби временно недоступны. Попробуйте позже.")
                     return
                 
+                # Добавляем чибика в коллекцию пользователя
+                telegram_id_str = str(message.from_user.id)
+                if telegram_id_str not in self.user_chibis:
+                    self.user_chibis[telegram_id_str] = []
+                self.user_chibis[telegram_id_str].append(chibi_name)
+                
                 # Формируем текст сообщения
                 chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!* 
 _Надеюсь, он тебе понравился! Приходи еще через 3ч 59м_ 
@@ -195,7 +230,7 @@ _Надеюсь, он тебе понравился! Приходи еще че�
         @self.bot.message_handler(commands=['task'])
         def task_handler(message):
             try:
-                task_text = self.generate_task()
+                task_text, emoji = self.generate_task()
                 
                 # Создаем инлайн-кнопки
                 markup = types.InlineKeyboardMarkup(row_width=2)
@@ -205,11 +240,11 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                 )
                 btn_skip = types.InlineKeyboardButton(
                     "Пропустить", 
-                    callback_data="task_skip"
+                    callback_data="task_skip_confirm"
                 )
                 markup.add(btn_complete, btn_skip)
                 
-                # Отправляем задание с кнопками
+                # Сохраняем emoji для подтверждения пропуска
                 self.bot.send_message(
                     message.chat.id,
                     task_text,
@@ -256,9 +291,54 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     self.bot.answer_callback_query(call.id, "Задание пока нельзя сдать!")
                     
                 elif call.data == "task_skip":
+                    # Пропускаем задание (удаляем сообщение)
                     self.bot.answer_callback_query(call.id, "Задание пропущено!")
-                    # Удаляем сообщение с заданием
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
+                    
+                elif call.data == "task_skip_confirm":
+                    # Подтверждение пропуска задания
+                    # Извлекаем emoji из текста сообщения
+                    message_text = call.message.text
+                    emoji = message_text.split(' ')[0]  # Первый символ - emoji
+                    
+                    skip_text = f"""{emoji}* Ты точно хочешь пропустить задание?*
+_Придется долго ждать следующее, но пропуск бесплатный_"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    btn_skip = types.InlineKeyboardButton("Пропустить", callback_data="task_skip")
+                    btn_back = types.InlineKeyboardButton("Назад", callback_data="task_back")
+                    markup.add(btn_skip, btn_back)
+                    
+                    self.bot.edit_message_text(
+                        skip_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data == "task_back":
+                    # Возвращаемся к заданию
+                    task_text, _ = self.generate_task()
+                    
+                    markup = types.InlineKeyboardMarkup(row_width=2)
+                    btn_complete = types.InlineKeyboardButton(
+                        "Сдать задание (0/1)", 
+                        callback_data="task_complete"
+                    )
+                    btn_skip = types.InlineKeyboardButton(
+                        "Пропустить", 
+                        callback_data="task_skip_confirm"
+                    )
+                    markup.add(btn_complete, btn_skip)
+                    
+                    self.bot.edit_message_text(
+                        task_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
                     
                 elif call.data == "menu_warehouse":
                     # Показываем меню склада
@@ -266,7 +346,7 @@ _Здесь ты найдешь все, что нужно, но не имеет 
 _Выбери, на какой раздел склада хочешь глянуть_"""
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
-                    btn_chibis = types.InlineKeyboardButton("Чибики", callback_data="warehouse_chibis")
+                    btn_chibis = types.InlineKeyboardButton("Чибики", callback_data="warehouse_chibis_1")
                     btn_items = types.InlineKeyboardButton("Предметы", callback_data="warehouse_items")
                     btn_back = types.InlineKeyboardButton("Назад", callback_data="menu_back")
                     
@@ -281,8 +361,47 @@ _Выбери, на какой раздел склада хочешь гляну
                         parse_mode='Markdown'
                     )
                     
-                elif call.data == "warehouse_chibis":
-                    self.bot.answer_callback_query(call.id, "Раздел 'Чибики' пока пуст!")
+                elif call.data.startswith("warehouse_chibis_"):
+                    # Показываем коллекцию чибиков
+                    page = int(call.data.split("_")[2])
+                    chibis, current_page, total_pages = self.get_user_chibis_paginated(call.from_user.id, page)
+                    
+                    chibis_text = f"""📦 *Твои чибики*
+_Великолепные и неповторимые. Ну, почти…
+Страница {current_page}/{total_pages}_"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    
+                    # Добавляем кнопки чибиков
+                    if chibis:
+                        for chibi_name, count in chibis:
+                            if count > 1:
+                                btn_text = f"{chibi_name} ({count})"
+                            else:
+                                btn_text = chibi_name
+                            markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"chibi_info_{chibi_name}"))
+                    else:
+                        markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
+                    
+                    # Добавляем навигацию
+                    nav_buttons = []
+                    if total_pages > 1:
+                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_chibis_{((current_page-2) % total_pages) + 1}"))
+                    
+                    nav_buttons.append(types.InlineKeyboardButton("Назад", callback_data="menu_warehouse"))
+                    
+                    if total_pages > 1:
+                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"warehouse_chibis_{(current_page % total_pages) + 1}"))
+                    
+                    markup.row(*nav_buttons)
+                    
+                    self.bot.edit_message_text(
+                        chibis_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
                     
                 elif call.data == "warehouse_items":
                     self.bot.answer_callback_query(call.id, "Раздел 'Предметы' пока пуст!")
@@ -310,6 +429,13 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     
                 elif call.data == "menu_bonus":
                     self.bot.answer_callback_query(call.id, "Ежедневный бонус пока недоступен!")
+                    
+                elif call.data.startswith("chibi_info_"):
+                    chibi_name = call.data[11:]
+                    self.bot.answer_callback_query(call.id, f"Информация о {chibi_name}")
+                    
+                elif call.data == "empty":
+                    self.bot.answer_callback_query(call.id, "У тебя пока нет чибиков!")
                     
                 else:
                     self.bot.answer_callback_query(call.id)
