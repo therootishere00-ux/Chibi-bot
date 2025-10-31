@@ -13,23 +13,6 @@ from config import BOT_CONFIG, BOT_TEXTS
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Для отправки ошибок в админ-бота
-ADMIN_BOT_TOKEN = os.getenv('ADMIN_BOT_TOKEN')
-if ADMIN_BOT_TOKEN:
-    admin_bot = telebot.TeleBot(ADMIN_BOT_TOKEN)
-else:
-    admin_bot = None
-
-def report_error_to_admin(error_type, error_code, user_nick=None):
-    """Отправляет ошибку в админ-бота"""
-    if admin_bot:
-        try:
-            # Здесь будет код отправки ошибки админам
-            # Пока просто логируем
-            logger.error(f"Ошибка для админов: {error_type} - {error_code} (Пользователь: {user_nick})")
-        except Exception as e:
-            logger.error(f"Не удалось отправить ошибку админам: {e}")
-
 class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
@@ -82,43 +65,35 @@ class ChibiBot:
 
     def get_random_chibi(self, from_pack=False):
         """Получает случайный чиби из папки common или secret"""
-        try:
-            if from_pack and random.random() <= 0.05:  # 5% шанс на секретного чибика из пака
-                chibi_folder = "chibis/secret"
-            else:
-                chibi_folder = "chibis/common"
-            
-            # Проверяем существование папки
-            if not os.path.exists(chibi_folder):
-                logger.error(f"Папка {chibi_folder} не найдена!")
-                report_error_to_admin("FolderNotFound", f"Папка {chibi_folder} не найдена")
-                return None, None, "Common"
-            
-            # Получаем список PNG файлов
-            chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
-            
-            if not chibi_files:
-                logger.error(f"В папке {chibi_folder} нет PNG файлов!")
-                report_error_to_admin("NoChibiFiles", f"В папке {chibi_folder} нет PNG файлов")
-                return None, None, "Common"
-            
-            # Выбираем случайный файл
-            random_file = random.choice(chibi_files)
-            file_path = os.path.join(chibi_folder, random_file)
-            
-            # Форматируем название файла
-            file_name = os.path.splitext(random_file)[0]  # Убираем расширение
-            formatted_name = file_name.replace('_', ' ')  # Заменяем _ на пробелы
-            
-            # Определяем редкость
-            rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
-            
-            return file_path, formatted_name, rarity
-            
-        except Exception as e:
-            logger.error(f"Ошибка при получении чибика: {e}")
-            report_error_to_admin("GetChibiError", str(e))
+        if from_pack and random.random() <= 0.05:  # 5% шанс на секретного чибика из пака
+            chibi_folder = "chibis/secret"
+        else:
+            chibi_folder = "chibis/common"
+        
+        # Проверяем существование папки
+        if not os.path.exists(chibi_folder):
+            logger.error(f"Папка {chibi_folder} не найдена!")
             return None, None, "Common"
+        
+        # Получаем список PNG файлов
+        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
+        
+        if not chibi_files:
+            logger.error(f"В папке {chibi_folder} нет PNG файлов!")
+            return None, None, "Common"
+        
+        # Выбираем случайный файл
+        random_file = random.choice(chibi_files)
+        file_path = os.path.join(chibi_folder, random_file)
+        
+        # Форматируем название файла
+        file_name = os.path.splitext(random_file)[0]  # Убираем расширение
+        formatted_name = file_name.replace('_', ' ')  # Заменяем _ на пробелы
+        
+        # Определяем редкость
+        rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
+        
+        return file_path, formatted_name, rarity
 
     def get_chibi_count(self, telegram_id, chibi_name):
         """Получает количество конкретного чибика у пользователя"""
@@ -144,9 +119,9 @@ class ChibiBot:
         
         # Случайные реплики
         phrases = [
-            "Эй, ты! Принеси-ка мне *{chibi}*, я щедро тебя награжу!",
-            "Приветствую… Очень хочу заполучить *{chibi}*, если принесешь мне его, в долгу не останусь",
-            "Бурабура, лакуш'н, принеси мне *{chibi}*, я готов платить"
+            "Эй, ты! Принеси-ка мне {chibi}, я щедро тебя награжу!",
+            "Приветствую… Очень хочу заполучить {chibi}, если принесешь мне его, в долгу не останусь",
+            "Бурабура, лакуш'н, принеси мне {chibi}, я готов платить"
         ]
         
         # Получаем случайный чибик для задания
@@ -160,7 +135,7 @@ class ChibiBot:
         # Выбираем случайные элементы
         emoji = random.choice(emojis)
         name = random.choice(names)
-        phrase = random.choice(phrases).format(chibi=chibi_name)  # Название чибика уже в фразе
+        phrase = random.choice(phrases).format(chibi=chibi_name)  # Убрали ** из курсивных реплик
         
         # Сохраняем задание для пользователя
         task_data = {
@@ -185,7 +160,7 @@ class ChibiBot:
         task_text = f"""*{task_data['emoji']} {task_data['name']}*
 _{task_data['phrase']}_
 `•••••••••••••••••••`
-Дам *💰 {task_data['reward']}* за *{task_data['chibi']}*"""
+Дам *💰 {task_data['reward']}* за {task_data['chibi']}"""
         
         return task_text, button_text, has_chibi
 
@@ -281,8 +256,7 @@ _{task_data['phrase']}_
                     
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                report_error_to_admin("StartError", str(e), message.from_user.first_name)
-                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
+                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['myid'])
         def myid_handler(message):
@@ -296,8 +270,41 @@ _{task_data['phrase']}_
                 
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                report_error_to_admin("MyIdError", str(e), message.from_user.first_name)
-                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
+                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+
+        @self.bot.message_handler(commands=['balance'])
+        def balance_handler(message):
+            try:
+                telegram_id_str = str(message.from_user.id)
+                coins = self.user_coins.get(telegram_id_str, 0)
+                
+                balance_text = f"💰 У тебя — *{coins}* коинов!"
+                self.bot.send_message(message.chat.id, balance_text, parse_mode='Markdown')
+                
+            except Exception as e:
+                logger.error(f"Ошибка: {e}")
+                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+
+        @self.bot.message_handler(commands=['mart'])
+        def mart_handler(message):
+            try:
+                mart_text = """🎏 *Лавка джавы*
+_Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!_"""
+                
+                markup = types.InlineKeyboardMarkup()
+                btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
+                markup.add(btn_pack)
+                
+                self.bot.send_message(
+                    message.chat.id,
+                    mart_text,
+                    reply_markup=markup,
+                    parse_mode='Markdown'
+                )
+                
+            except Exception as e:
+                logger.error(f"Ошибка при открытии лавки: {e}")
+                self.bot.send_message(message.chat.id, "❌ Ошибка при открытии лавки. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['chibi'])
         def chibi_handler(message):
@@ -322,7 +329,7 @@ _{task_data['phrase']}_
                 chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
 _Надеюсь, он тебе понравился! Приходи еще через *3ч 59м*_
 `•••••••••••••••••••`
-Редкость: {rarity_emoji} _{rarity}_
+Редкость: {rarity_emoji} _Common_
 У тебя: {chibi_count}"""
                 
                 # Отправляем картинку с текстом
@@ -338,8 +345,7 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                     
             except Exception as e:
                 logger.error(f"Ошибка при отправке чиби: {e}")
-                report_error_to_admin("ChibiError", str(e), message.from_user.first_name)
-                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
+                self.bot.send_message(message.chat.id, "❌ Ошибка при получении чиби. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['task'])
         def task_handler(message):
@@ -368,8 +374,7 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                 
             except Exception as e:
                 logger.error(f"Ошибка при генерации задания: {e}")
-                report_error_to_admin("TaskError", str(e), message.from_user.first_name)
-                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
+                self.bot.send_message(message.chat.id, "❌ Ошибка при создании задания. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['menu'])
         def menu_handler(message):
@@ -396,8 +401,7 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии меню: {e}")
-                report_error_to_admin("MenuError", str(e), message.from_user.first_name)
-                self.bot.send_message(message.chat.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
+                self.bot.send_message(message.chat.id, "❌ Ошибка при открытии меню. Попробуйте позже.")
 
         # Обработчик callback для кнопок
         @self.bot.callback_query_handler(func=lambda call: True)
@@ -411,6 +415,11 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                         return
                     
                     task_data = self.user_tasks[telegram_id_str]
+                    
+                    # Убираем один чибик из коллекции
+                    if telegram_id_str in self.user_chibis and task_data["chibi"] in self.user_chibis[telegram_id_str]:
+                        # Удаляем первое вхождение чибика
+                        self.user_chibis[telegram_id_str].remove(task_data["chibi"])
                     
                     # Удаляем сообщение с заданием
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -740,6 +749,104 @@ _Тут хранятся твои боксы. Других предметов в
                         parse_mode='Markdown'
                     )
                     
+                elif call.data == "mart_chibi_pack":
+                    # Показываем покупку Чиби-пака
+                    pack_text = """🎏 *Хочешь купить этот прекрасный Чиби-пак?*
+_Да брось, знаю что так руки и чешутся!_"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    btn_buy = types.InlineKeyboardButton("Купить (120)", callback_data="buy_chibi_pack")
+                    btn_back = types.InlineKeyboardButton("Назад", callback_data="mart_back")
+                    markup.add(btn_buy)
+                    markup.add(btn_back)
+                    
+                    self.bot.edit_message_text(
+                        pack_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data == "buy_chibi_pack":
+                    # Покупаем Чиби-пак
+                    telegram_id_str = str(call.from_user.id)
+                    coins = self.user_coins.get(telegram_id_str, 0)
+                    
+                    if coins < 120:
+                        self.bot.answer_callback_query(call.id, "Недостаточно коинов! Нужно 120.")
+                        return
+                    
+                    # Списываем коины
+                    self.user_coins[telegram_id_str] = coins - 120
+                    
+                    # Добавляем Чиби-пак
+                    if telegram_id_str not in self.user_items:
+                        self.user_items[telegram_id_str] = {}
+                    
+                    if "🧧 Чиби-пак" not in self.user_items[telegram_id_str]:
+                        self.user_items[telegram_id_str]["🧧 Чиби-пак"] = 0
+                    
+                    self.user_items[telegram_id_str]["🧧 Чиби-пак"] += 1
+                    
+                    self.bot.answer_callback_query(call.id, "Чиби-пак куплен!")
+                    
+                    # Возвращаемся в лавку
+                    mart_text = """🎏 *Лавка джавы*
+_Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!_"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
+                    markup.add(btn_pack)
+                    
+                    self.bot.edit_message_text(
+                        mart_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data == "mart_back":
+                    # Возвращаемся в лавку
+                    mart_text = """🎏 *Лавка джавы*
+_Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!_"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
+                    markup.add(btn_pack)
+                    
+                    self.bot.edit_message_text(
+                        mart_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data == "menu_bonus":
+                    # Ежедневный бонус
+                    telegram_id_str = str(call.from_user.id)
+                    bonus = random.randint(7, 19)
+                    
+                    # Начисляем бонус
+                    if telegram_id_str not in self.user_coins:
+                        self.user_coins[telegram_id_str] = 0
+                    self.user_coins[telegram_id_str] += bonus
+                    
+                    user_name = call.from_user.first_name or "путешественник"
+                    bonus_text = f"""🎁 *Эй, {user_name}!*
+_Ты только что получил ежедневный бонус!_ 
+`•••••••••••••••••`
++ 💰*{bonus}* коинов"""
+                    
+                    self.bot.edit_message_text(
+                        bonus_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        parse_mode='Markdown'
+                    )
+                    
                 elif call.data == "menu_back":
                     # Возвращаемся к главному меню
                     menu_text = """*✨ Меню* 
@@ -761,9 +868,6 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                         parse_mode='Markdown'
                     )
                     
-                elif call.data == "menu_bonus":
-                    self.bot.answer_callback_query(call.id, "Ежедневный бонус пока недоступен!")
-                    
                 elif call.data == "chibi_click":
                     # При нажатии на чибика ничего не происходит
                     self.bot.answer_callback_query(call.id)
@@ -779,8 +883,7 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     
             except Exception as e:
                 logger.error(f"Ошибка в callback: {e}")
-                report_error_to_admin("CallbackError", str(e), call.from_user.first_name)
-                self.bot.answer_callback_query(call.id, "🤖 Кажется, произошла ошибка. Попробуй снова!")
+                self.bot.answer_callback_query(call.id, "❌ Ошибка!")
 
     def run(self):
         logger.info("🤖 Чиби-бот запущен!")
