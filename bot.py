@@ -22,7 +22,7 @@ class ChibiBot:
         self.user_items = {}   # Храним предметы пользователей: {user_id: {"🧧 Чиби-пак": 1}}
         self.user_tasks = {}   # Храним текущие задания пользователей: {user_id: {"chibi": "имя", "reward": 35, "emoji": "🐊", "name": "Грирт"}}
         self.user_coins = {}   # Храним коины пользователей: {user_id: 0}
-        self.active_trades = {} # Храним активные трейды: {trade_id: {"from_user": user_id, "to_user": user_id, "chibi": "имя", "price": amount, "message_id": id}}
+        self.gift_selections = {}  # Храним выбранных чибиков для подарка: {user_id: {"target_user_id": "123", "chibi_name": "имя"}}
         
     def generate_unique_user_id(self):
         attempts = 0
@@ -221,6 +221,35 @@ _{task_data['phrase']}_
         
         return page_items, page, total_pages
 
+    def get_user_chibis_for_gift(self, telegram_id, page=1, per_page=6):
+        """Получает чибиков пользователя для выбора подарка"""
+        telegram_id_str = str(telegram_id)
+        if telegram_id_str not in self.user_chibis:
+            self.user_chibis[telegram_id_str] = []
+        
+        chibis = self.user_chibis[telegram_id_str]
+        
+        # Подсчитываем количество каждого чибика
+        chibi_counts = {}
+        for chibi in chibis:
+            chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
+        
+        # Сортируем по количеству (от большего к меньшему), затем по алфавиту
+        sorted_chibis = sorted(
+            [(name, count) for name, count in chibi_counts.items()],
+            key=lambda x: (-x[1], x[0])  # Сначала по количеству (убывание), потом по имени
+        )
+        
+        # Пагинация
+        total_pages = max(1, (len(sorted_chibis) + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+        
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        page_chibis = sorted_chibis[start_idx:end_idx]
+        
+        return page_chibis, page, total_pages
+
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
@@ -404,104 +433,107 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 logger.error(f"Ошибка при открытии меню: {e}")
                 self.bot.send_message(message.chat.id, "❌ Ошибка при открытии меню. Попробуйте позже.")
 
-        @self.bot.message_handler(commands=['trade'])
-        def trade_handler(message):
+        @self.bot.message_handler(commands=['gift'])
+        def gift_handler(message):
             try:
-                trade_text = """🔥 *Как кинуть трейд*
-_Мини-гайд, читай и запоминай!_
-||•••••••••••••||
-1) Напиши *в ответ* игроку это сообщение: ||дам чибик за (твоя цена)||
-2) Установи свою цену. Советую использовать таблицу примерных цен (можно найти в нашем канале)
-3) Выбери чибика из своей коллекции и жди, пока другой игрок, которому ты кинул обмен, *примет* его или *отклонит*"""
+                # Проверяем наличие аргумента (ID пользователя)
+                if len(message.text.split()) < 2:
+                    self.bot.send_message(
+                        message.chat.id,
+                        "❌ Неверный формат команды. Используй: `/gift [ID_пользователя]`",
+                        parse_mode='Markdown'
+                    )
+                    return
+                
+                target_user_id = message.text.split()[1].strip()
+                
+                # Проверяем, существует ли пользователь с таким ID
+                target_user_found = False
+                target_user_data = None
+                
+                for telegram_id_str, user_data in self.users.items():
+                    if user_data['user_id'] == target_user_id:
+                        target_user_found = True
+                        target_user_data = user_data
+                        break
+                
+                if not target_user_found:
+                    self.bot.send_message(
+                        message.chat.id,
+                        "❌ Пользователь с таким ID не найден.",
+                        parse_mode='Markdown'
+                    )
+                    return
+                
+                # Проверяем, не пытается ли пользователь отправить подарок самому себе
+                if str(message.from_user.id) in self.users and self.users[str(message.from_user.id)]['user_id'] == target_user_id:
+                    self.bot.send_message(
+                        message.chat.id,
+                        "❌ Нельзя отправить подарок самому себе!",
+                        parse_mode='Markdown'
+                    )
+                    return
+                
+                # Сохраняем выбор пользователя для подарка
+                telegram_id_str = str(message.from_user.id)
+                self.gift_selections[telegram_id_str] = {
+                    "target_user_id": target_user_id,
+                    "target_telegram_id": None,
+                    "target_name": target_user_data.get('first_name', 'пользователь')
+                }
+                
+                # Находим telegram_id целевого пользователя
+                for telegram_id, user_data in self.users.items():
+                    if user_data['user_id'] == target_user_id:
+                        self.gift_selections[telegram_id_str]["target_telegram_id"] = telegram_id
+                        break
+                
+                # Показываем выбор чибиков для подарка
+                chibis, current_page, total_pages = self.get_user_chibis_for_gift(message.from_user.id, 1)
+                
+                if not chibis:
+                    self.bot.send_message(
+                        message.chat.id,
+                        "❌ У тебя нет чибиков для подарка!",
+                        parse_mode='Markdown'
+                    )
+                    return
+                
+                gift_text = f"""✨ *О, да ты у нас щедрый!*
+_Выбери, какого чибика подаришь_"""
+                
+                markup = types.InlineKeyboardMarkup()
+                
+                # Добавляем кнопки чибиков (по одной в ряд)
+                for chibi_name, count in chibis:
+                    if count > 1:
+                        btn_text = f"{chibi_name} ({count})"
+                    else:
+                        btn_text = chibi_name
+                    markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
+                
+                # Добавляем навигацию
+                nav_buttons = []
+                if total_pages > 1:
+                    nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
+                
+                nav_buttons.append(types.InlineKeyboardButton("Отменить", callback_data="gift_cancel"))
+                
+                if total_pages > 1:
+                    nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"gift_page_{(current_page % total_pages) + 1}"))
+                
+                markup.row(*nav_buttons)
                 
                 self.bot.send_message(
                     message.chat.id,
-                    trade_text,
+                    gift_text,
+                    reply_markup=markup,
                     parse_mode='Markdown'
                 )
                 
             except Exception as e:
-                logger.error(f"Ошибка при показе инструкции трейда: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
-
-        # Обработчик текстовых сообщений для трейдов
-        @self.bot.message_handler(func=lambda message: True, content_types=['text'])
-        def text_message_handler(message):
-            try:
-                # Проверяем, является ли сообщение ответом и содержит ли ключевые слова для трейда
-                if (message.reply_to_message and 
-                    message.reply_to_message.from_user.id == self.bot.get_me().id and
-                    "дам чибик за" in message.text.lower()):
-                    
-                    # Извлекаем цену из сообщения
-                    text_lower = message.text.lower()
-                    price_part = text_lower.split("дам чибик за")[1].strip()
-                    
-                    # Пытаемся извлечь число
-                    try:
-                        # Убираем все нецифровые символы, кроме минуса
-                        price_str = ''.join(c for c in price_part.split()[0] if c.isdigit() or c == '-')
-                        if price_str and price_str != '-':
-                            price = int(price_str)
-                            if price < 0:
-                                self.bot.reply_to(message, "❌ Цена не может быть отрицательной!")
-                                return
-                        else:
-                            price = 0
-                    except (ValueError, IndexError):
-                        price = 0
-                    
-                    # Проверяем, не пытается ли пользователь отправить трейд самому себе
-                    if message.reply_to_message.forward_from and message.reply_to_message.forward_from.id == message.from_user.id:
-                        self.bot.reply_to(message, "❌ Сам с собой торговаться собрался? 🤷‍♂️")
-                        return
-                    
-                    # Получаем ID пользователя, которому предназначается трейд
-                    # Это сложно, так как мы не знаем точно, кому было исходное сообщение
-                    # В реальном боте нужно хранить информацию о том, кому были отправлены сообщения
-                    # Для простоты будем считать, что трейд можно отправить только в ответ на сообщение бота
-                    
-                    # Показываем выбор чибика для трейда
-                    trade_text = f"🔥* Отлично! Теперь выбери чибика*\n_Тапни по нужному, которого хочешь обменять на {price} коинов_"
-                    
-                    # Получаем чибиков пользователя с пагинацией
-                    chibis, current_page, total_pages = self.get_user_chibis_paginated(message.from_user.id, 1, 6)
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    
-                    # Добавляем кнопки чибиков
-                    if chibis:
-                        for chibi_name, count in chibis:
-                            if count > 1:
-                                btn_text = f"{chibi_name} ({count})"
-                            else:
-                                btn_text = chibi_name
-                            callback_data = f"trade_select_{price}_{chibi_name.replace(' ', '_')}"
-                            markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
-                    else:
-                        markup.add(types.InlineKeyboardButton("У тебя нет чибиков!", callback_data="no_chibis"))
-                    
-                    # Добавляем навигацию
-                    nav_buttons = []
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"trade_page_{((current_page-2) % total_pages) + 1}_{price}"))
-                    
-                    nav_buttons.append(types.InlineKeyboardButton("Отменить", callback_data="trade_cancel"))
-                    
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"trade_page_{(current_page % total_pages) + 1}_{price}"))
-                    
-                    markup.row(*nav_buttons)
-                    
-                    self.bot.send_message(
-                        message.chat.id,
-                        trade_text,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-            except Exception as e:
-                logger.error(f"Ошибка при обработке текстового сообщения: {e}")
+                logger.error(f"Ошибка при отправке подарка: {e}")
+                self.bot.send_message(message.chat.id, "❌ Ошибка при отправке подарка. Попробуйте позже.")
 
         # Обработчик callback для кнопок
         @self.bot.callback_query_handler(func=lambda call: True)
@@ -968,178 +1000,160 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                         parse_mode='Markdown'
                     )
                     
-                # Обработчики для системы трейдов
-                elif call.data.startswith("trade_page_"):
-                    # Переключение страницы при выборе чибика для трейда
-                    parts = call.data.split("_")
-                    page = int(parts[2])
-                    price = int(parts[3])
+                elif call.data.startswith("gift_page_"):
+                    # Переключение страницы при выборе подарка
+                    page = int(call.data.split("_")[2])
+                    telegram_id_str = str(call.from_user.id)
                     
-                    chibis, current_page, total_pages = self.get_user_chibis_paginated(call.from_user.id, page, 6)
+                    if telegram_id_str not in self.gift_selections:
+                        self.bot.answer_callback_query(call.id, "Сессия подарка истекла!")
+                        return
                     
-                    trade_text = f"🔥* Отлично! Теперь выбери чибика*\n_Тапни по нужному, которого хочешь обменять на {price} коинов_"
+                    chibis, current_page, total_pages = self.get_user_chibis_for_gift(call.from_user.id, page)
+                    
+                    gift_text = f"""✨ *О, да ты у нас щедрый!*
+_Выбери, какого чибика подаришь_"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    if chibis:
-                        for chibi_name, count in chibis:
-                            if count > 1:
-                                btn_text = f"{chibi_name} ({count})"
-                            else:
-                                btn_text = chibi_name
-                            callback_data = f"trade_select_{price}_{chibi_name.replace(' ', '_')}"
-                            markup.add(types.InlineKeyboardButton(btn_text, callback_data=callback_data))
-                    else:
-                        markup.add(types.InlineKeyboardButton("У тебя нет чибиков!", callback_data="no_chibis"))
+                    # Добавляем кнопки чибиков (по одной в ряд)
+                    for chibi_name, count in chibis:
+                        if count > 1:
+                            btn_text = f"{chibi_name} ({count})"
+                        else:
+                            btn_text = chibi_name
+                        markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
                     
+                    # Добавляем навигацию
                     nav_buttons = []
                     if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"trade_page_{((current_page-2) % total_pages) + 1}_{price}"))
+                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
                     
-                    nav_buttons.append(types.InlineKeyboardButton("Отменить", callback_data="trade_cancel"))
+                    nav_buttons.append(types.InlineKeyboardButton("Отменить", callback_data="gift_cancel"))
                     
                     if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"trade_page_{(current_page % total_pages) + 1}_{price}"))
+                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"gift_page_{(current_page % total_pages) + 1}"))
                     
                     markup.row(*nav_buttons)
                     
                     self.bot.edit_message_text(
-                        trade_text,
+                        gift_text,
                         call.message.chat.id,
                         call.message.message_id,
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
                     
-                elif call.data.startswith("trade_select_"):
-                    # Выбор чибика для трейда
-                    parts = call.data.split("_")
-                    price = int(parts[2])
-                    chibi_name = " ".join(parts[3:])  # Восстанавливаем имя с пробелами
-                    
-                    # Удаляем сообщение с выбором чибика
-                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
-                    
-                    # Отправляем предложение трейда
-                    from_user_name = call.from_user.first_name or "Неизвестный"
-                    price_text = f"💰*{price}*" if price > 0 else "бесплатно"
-                    
-                    trade_offer_text = f"""🔥*Эй, {from_user_name}!*
-_Кажется, у кого-то для тебя сделка! Решай, соглашаться или нет_"""
-                    
-                    markup = types.InlineKeyboardMarkup(row_width=2)
-                    btn_accept = types.InlineKeyboardButton("Принять", callback_data=f"trade_accept_{call.from_user.id}_{chibi_name.replace(' ', '_')}_{price}")
-                    btn_decline = types.InlineKeyboardButton("Отклонить", callback_data=f"trade_decline_{call.from_user.id}")
-                    markup.add(btn_accept, btn_decline)
-                    
-                    # В реальном боте здесь нужно отправить сообщение конкретному пользователю
-                    # Для демонстрации отправляем в тот же чат
-                    self.bot.send_message(
-                        call.message.chat.id,
-                        trade_offer_text,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "trade_cancel":
-                    # Отмена трейда
-                    self.bot.edit_message_text(
-                        "✨ *Трейд отменен*",
-                        call.message.chat.id,
-                        call.message.message_id,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data.startswith("trade_accept_"):
-                    # Принятие трейда
-                    parts = call.data.split("_")
-                    from_user_id = int(parts[2])
-                    chibi_name = " ".join(parts[3:-1])  # Восстанавливаем имя с пробелами
-                    price = int(parts[-1])
-                    
-                    # Проверяем, не пытается ли пользователь принять свой же трейд
-                    if from_user_id == call.from_user.id:
-                        self.bot.answer_callback_query(call.id, "❌ Нельзя принять свой же трейд!")
-                        return
-                    
-                    # Проверяем, есть ли у принимающего достаточно коинов
+                elif call.data.startswith("gift_select_"):
+                    # Выбор чибика для подарка
+                    chibi_name = call.data.replace("gift_select_", "")
                     telegram_id_str = str(call.from_user.id)
-                    coins = self.user_coins.get(telegram_id_str, 0)
                     
-                    if price > 0 and coins < price:
-                        self.bot.answer_callback_query(call.id, "❌ Недостаточно коинов!")
+                    if telegram_id_str not in self.gift_selections:
+                        self.bot.answer_callback_query(call.id, "Сессия подарка истекла!")
                         return
                     
-                    # Проверяем, есть ли у отправителя выбранный чибик
-                    from_user_str = str(from_user_id)
-                    if (from_user_str not in self.user_chibis or 
-                        chibi_name not in self.user_chibis[from_user_str]):
-                        self.bot.answer_callback_query(call.id, "❌ У отправителя больше нет этого чибика!")
+                    # Сохраняем выбранного чибика
+                    self.gift_selections[telegram_id_str]["chibi_name"] = chibi_name
+                    
+                    # Показываем подтверждение
+                    target_name = self.gift_selections[telegram_id_str]["target_name"]
+                    
+                    confirm_text = f"""✨ *Дарим чибика?*
+_Ты уверен, что хочешь этого? Назад вернуть уже не получится_
+||•••••••••••••••||
+Кому: *{target_name}*
+Кого: *{chibi_name}*"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    btn_confirm = types.InlineKeyboardButton("✅ Подтвердить", callback_data="gift_confirm")
+                    btn_cancel = types.InlineKeyboardButton("🙅‍♂️ Отмена", callback_data="gift_cancel")
+                    markup.add(btn_confirm, btn_cancel)
+                    
+                    self.bot.edit_message_text(
+                        confirm_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data == "gift_confirm":
+                    # Подтверждение отправки подарка
+                    telegram_id_str = str(call.from_user.id)
+                    
+                    if telegram_id_str not in self.gift_selections:
+                        self.bot.answer_callback_query(call.id, "Сессия подарка истекла!")
                         return
                     
-                    # Выполняем обмен
-                    # Убираем чибик у отправителя
-                    self.user_chibis[from_user_str].remove(chibi_name)
+                    gift_data = self.gift_selections[telegram_id_str]
+                    chibi_name = gift_data["chibi_name"]
+                    target_telegram_id = gift_data["target_telegram_id"]
+                    target_name = gift_data["target_name"]
                     
-                    # Добавляем чибик получателю
-                    if telegram_id_str not in self.user_chibis:
-                        self.user_chibis[telegram_id_str] = []
-                    self.user_chibis[telegram_id_str].append(chibi_name)
+                    # Проверяем, есть ли еще такой чибик у отправителя
+                    if telegram_id_str not in self.user_chibis or chibi_name not in self.user_chibis[telegram_id_str]:
+                        self.bot.answer_callback_query(call.id, "У тебя больше нет этого чибика!")
+                        return
                     
-                    # Переводим коины
-                    if price > 0:
-                        # Списываем у получателя
-                        self.user_coins[telegram_id_str] = coins - price
-                        # Начисляем отправителю
-                        if from_user_str not in self.user_coins:
-                            self.user_coins[from_user_str] = 0
-                        self.user_coins[from_user_str] += price
+                    # Удаляем чибика у отправителя
+                    self.user_chibis[telegram_id_str].remove(chibi_name)
                     
-                    # Удаляем сообщение с трейдом
+                    # Добавляем чибика получателю
+                    if target_telegram_id not in self.user_chibis:
+                        self.user_chibis[target_telegram_id] = []
+                    self.user_chibis[target_telegram_id].append(chibi_name)
+                    
+                    # Удаляем сообщение с подтверждением
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    # Отправляем стикер
-                    sticker_id = "CAACAgIAAxkBAAE9Js1pAzTTQ9xRej9YYWAs_M_2sMGFnQAC2kkAAkZFCUqenx6Y9nShgTYE"
-                    self.bot.send_sticker(call.message.chat.id, sticker_id)
+                    # Отправляем стикер отправителю
+                    sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
+                    self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
                     
-                    # Отправляем сообщение об успешном трейде
-                    from_user_name = "Неизвестный"
-                    to_user_name = call.from_user.first_name or "Неизвестный"
-                    
-                    # Получаем имя отправителя из данных пользователя
-                    if from_user_str in self.users:
-                        from_user_name = self.users[from_user_str].get('first_name', 'Неизвестный')
-                    
-                    price_text = f"💰*{price}*" if price > 0 else "бесплатно"
-                    
-                    trade_success_text = f"""*🔥 {to_user_name} выменял у {from_user_name}*
-||••••••••••••••••||
-*{chibi_name}* за {price_text}"""
+                    # Сообщение отправителю
+                    sender_name = call.from_user.first_name or "Отправитель"
+                    sender_text = f"""*✨ Чибик отправлен! 
+_Надеюсь, {target_name} он понравится!_*"""
                     
                     self.bot.send_message(
                         call.message.chat.id,
-                        trade_success_text,
+                        sender_text,
                         parse_mode='Markdown'
                     )
                     
-                elif call.data.startswith("trade_decline_"):
-                    # Отклонение трейда
-                    from_user_id = int(call.data.split("_")[2])
-                    from_user_name = "Неизвестный"
+                    # Отправляем стикер получателю
+                    sticker_id_receiver = "CAACAgIAAxkBAAE9OxxpBRLZ5OANTuRD-97sRPdCONwv0AACU0YAAkVlEErI0vjxKMrHnTYE"
+                    self.bot.send_sticker(target_telegram_id, sticker_id_receiver)
                     
-                    # Получаем имя отправителя из данных пользователя
-                    from_user_str = str(from_user_id)
-                    if from_user_str in self.users:
-                        from_user_name = self.users[from_user_str].get('first_name', 'Неизвестный')
+                    # Сообщение получателю
+                    receiver_text = f"""*💌 Тебе подарок!*
+_{sender_name} подарил тебе {chibi_name}!_"""
                     
-                    decliner_name = call.from_user.first_name or "Неизвестный"
+                    markup = types.InlineKeyboardMarkup()
+                    btn_view = types.InlineKeyboardButton("Посмотреть", callback_data="warehouse_chibis_1")
+                    markup.add(btn_view)
                     
-                    self.bot.edit_message_text(
-                        f"✨ {decliner_name} отклонил трейд",
-                        call.message.chat.id,
-                        call.message.message_id,
+                    self.bot.send_message(
+                        target_telegram_id,
+                        receiver_text,
+                        reply_markup=markup,
                         parse_mode='Markdown'
                     )
+                    
+                    # Очищаем данные подарка
+                    del self.gift_selections[telegram_id_str]
+                    
+                elif call.data == "gift_cancel":
+                    # Отмена подарка
+                    telegram_id_str = str(call.from_user.id)
+                    
+                    # Удаляем данные подарка
+                    if telegram_id_str in self.gift_selections:
+                        del self.gift_selections[telegram_id_str]
+                    
+                    # Удаляем сообщение
+                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
                 elif call.data == "chibi_click":
                     # При нажатии на чибика ничего не происходит
@@ -1150,9 +1164,6 @@ _Кажется, у кого-то для тебя сделка! Решай, со
                     
                 elif call.data == "empty":
                     self.bot.answer_callback_query(call.id, "Здесь пусто!")
-                    
-                elif call.data == "no_chibis":
-                    self.bot.answer_callback_query(call.id, "У тебя нет чибиков для трейда!")
                     
                 else:
                     self.bot.answer_callback_query(call.id)
