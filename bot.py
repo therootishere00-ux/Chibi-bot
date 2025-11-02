@@ -23,11 +23,11 @@ class ChibiBot:
         self.user_tasks = {}   # Храним текущие задания пользователей: {user_id: {"chibi": "имя", "reward": 35, "emoji": "🐊", "name": "Грирт"}}
         self.user_coins = {}   # Храним коины пользователей: {user_id: 0}
         self.gift_selections = {}  # Храним выбранных чибиков для подарка: {user_id: {"target_user_id": "123", "chibi_name": "имя"}}
-        
-        # Новая структура для кантины
-        self.cantina_orders = {}   # Храним заказы кантины: {order_id: {"creator_id": "123", "chibi_name": "имя", "reward": 50, "status": "active", "created_date": datetime, "accepted_by": {user_id: {"has_chibi": False}}}}
-        self.user_order_creation = {}  # Храним данные создания заказа: {user_id: {"chibi_name": "имя", "reward": 50}}
-        self.user_states = {}  # Храним состояния пользователей для текстового ввода
+        self.cantina_orders = {}   # Храним заказы кантины
+        self.user_order_creation = {}  # Храним данные создания заказа
+        self.user_active_hunts = {}    # Храним активные охоты пользователей: {user_id: order_id}
+        self.order_accepted_by = {}    # Храним кто принял заказы: {order_id: [user_id1, user_id2]}
+        self.user_states = {}          # Храним состояния пользователей для ввода текста
         self.next_order_id = 1
         
     def generate_unique_user_id(self):
@@ -291,15 +291,6 @@ _{task_data['phrase']}_
                 return order_id, order_data
         return None, None
 
-    def get_user_accepted_order(self, telegram_id):
-        """Получает заказ, принятый пользователем"""
-        telegram_id_str = str(telegram_id)
-        for order_id, order_data in self.cantina_orders.items():
-            if (order_data["status"] == "active" and 
-                telegram_id_str in order_data["accepted_by"]):
-                return order_id, order_data
-        return None, None
-
     def get_other_orders_paginated(self, telegram_id, page=1, per_page=7):
         """Получает заказы других пользователей с пагинацией"""
         telegram_id_str = str(telegram_id)
@@ -308,9 +299,11 @@ _{task_data['phrase']}_
         for order_id, order_data in self.cantina_orders.items():
             if (order_data["creator_id"] != telegram_id_str and 
                 order_data["status"] == "active"):
-                other_orders.append((order_id, order_data))
+                # Проверяем, принял ли пользователь этот заказ
+                is_accepted = telegram_id_str in self.order_accepted_by.get(order_id, [])
+                other_orders.append((order_id, order_data, is_accepted))
         
-        # Сортируем по награде (от большей к меньшей)
+        # Сортируем по награде (от высокой к низкой)
         other_orders.sort(key=lambda x: x[1]["reward"], reverse=True)
         
         # Пагинация
@@ -416,69 +409,52 @@ _Джавы, может, и не отличаются умом, но зато т
         def chibi_handler(message):
             try:
                 telegram_id_str = str(message.from_user.id)
-                
-                # Проверяем, есть ли принятый заказ
-                accepted_order_id, accepted_order_data = self.get_user_accepted_order(message.from_user.id)
-                
                 file_path, chibi_name, rarity = self.get_random_chibi(from_pack=False)
                 
                 if file_path is None:
                     self.bot.send_message(message.chat.id, "❌ Чиби временно недоступны. Попробуйте позже.")
                     return
                 
-                # Проверяем, совпадает ли выпавший чибик с заказом
-                if (accepted_order_id and 
-                    accepted_order_data and 
-                    chibi_name == accepted_order_data["chibi_name"]):
-                    
-                    # Помечаем, что у пользователя есть чибик для заказа
-                    self.cantina_orders[accepted_order_id]["accepted_by"][telegram_id_str]["has_chibi"] = True
-                    
-                    # Формируем специальное сообщение для заказного чибика
+                # Проверяем, есть ли активная охота у пользователя
+                active_hunt_order_id = self.user_active_hunts.get(telegram_id_str)
+                hunt_chibi_needed = None
+                if active_hunt_order_id and active_hunt_order_id in self.cantina_orders:
+                    hunt_chibi_needed = self.cantina_orders[active_hunt_order_id]["chibi_name"]
+                
+                # Добавляем чибика в коллекцию пользователя
+                if telegram_id_str not in self.user_chibis:
+                    self.user_chibis[telegram_id_str] = []
+                self.user_chibis[telegram_id_str].append(chibi_name)
+                
+                # Получаем количество этого чибика у пользователя
+                chibi_count = self.get_chibi_count(message.from_user.id, chibi_name)
+                
+                # Формируем текст сообщения
+                rarity_emoji = "🔷" if rarity == "Common" else "💠"
+                
+                if hunt_chibi_needed and chibi_name == hunt_chibi_needed:
                     chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
 _Этот чибик нужен тебе, чтобы выполнить заказ в кантине! Скорее сдай его, пока конкуренты тебя не опередили_
 `•••••••••••••••••••`
-Редкость: 🔷 _{rarity}_
-У тебя: *1*"""
-                    
-                    # Отправляем картинку с текстом
-                    with open(file_path, 'rb') as photo:
-                        self.bot.send_photo(
-                            message.chat.id,
-                            photo,
-                            caption=chibi_text,
-                            parse_mode='Markdown'
-                        )
-                    
-                    logger.info(f"Выпал заказной чибик: {chibi_name} для пользователя {telegram_id_str}")
-                    
+Редкость: {rarity_emoji} _{rarity}_
+У тебя: *{chibi_count}*"""
                 else:
-                    # Обычный чибик - добавляем в коллекцию
-                    if telegram_id_str not in self.user_chibis:
-                        self.user_chibis[telegram_id_str] = []
-                    self.user_chibis[telegram_id_str].append(chibi_name)
-                    
-                    # Получаем количество этого чибика у пользователя
-                    chibi_count = self.get_chibi_count(message.from_user.id, chibi_name)
-                    
-                    # Формируем текст сообщения
-                    rarity_emoji = "🔷" if rarity == "Common" else "💠"
                     chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
 _Надеюсь, он тебе понравился! Приходи еще через *3ч 59м*_
 `•••••••••••••••••••`
-Редкость: {rarity_emoji} _Common_
+Редкость: {rarity_emoji} _{rarity}_
 У тебя: {chibi_count}"""
+                
+                # Отправляем картинку с текстом
+                with open(file_path, 'rb') as photo:
+                    self.bot.send_photo(
+                        message.chat.id,
+                        photo,
+                        caption=chibi_text,
+                        parse_mode='Markdown'
+                    )
                     
-                    # Отправляем картинку с текстом
-                    with open(file_path, 'rb') as photo:
-                        self.bot.send_photo(
-                            message.chat.id,
-                            photo,
-                            caption=chibi_text,
-                            parse_mode='Markdown'
-                        )
-                    
-                    logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
+                logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
                     
             except Exception as e:
                 logger.error(f"Ошибка при отправке чиби: {e}")
@@ -490,7 +466,6 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                 task_data = self.generate_task(message.from_user.id)
                 task_text, button_text, has_chibi = self.get_task_text(task_data, message.from_user.id)
                 
-                # Создаем инлайн-кнопки
                 markup = types.InlineKeyboardMarkup(row_width=2)
                 btn_complete = types.InlineKeyboardButton(
                     button_text, 
@@ -519,13 +494,11 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                 menu_text = """*✨ Меню* 
 _Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались_"""
                 
-                # Создаем кнопки меню
                 markup = types.InlineKeyboardMarkup(row_width=2)
                 btn_warehouse = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
                 btn_channel = types.InlineKeyboardButton("Наш тгк", url=BOT_CONFIG['telegram_channel'])
                 btn_bonus = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
                 
-                # Располагаем кнопки по две в ряд
                 markup.add(btn_warehouse, btn_channel)
                 markup.add(btn_bonus)
                 
@@ -543,7 +516,6 @@ _Здесь ты найдешь все, что нужно, но не имеет 
         @self.bot.message_handler(commands=['gift'])
         def gift_handler(message):
             try:
-                # Проверяем наличие аргумента (ID пользователя)
                 if len(message.text.split()) < 2:
                     self.bot.send_message(
                         message.chat.id,
@@ -554,7 +526,6 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 
                 target_user_id = message.text.split()[1].strip()
                 
-                # Проверяем, существует ли пользователь с таким ID
                 target_user_found = False
                 target_user_data = None
                 
@@ -572,7 +543,6 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     )
                     return
                 
-                # Проверяем, не пытается ли пользователь отправить подарок самому себе
                 if str(message.from_user.id) in self.users and self.users[str(message.from_user.id)]['user_id'] == target_user_id:
                     self.bot.send_message(
                         message.chat.id,
@@ -581,7 +551,6 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     )
                     return
                 
-                # Сохраняем выбор пользователя для подарка
                 telegram_id_str = str(message.from_user.id)
                 self.gift_selections[telegram_id_str] = {
                     "target_user_id": target_user_id,
@@ -589,13 +558,11 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     "target_name": target_user_data.get('first_name', 'пользователь')
                 }
                 
-                # Находим telegram_id целевого пользователя
                 for telegram_id, user_data in self.users.items():
                     if user_data['user_id'] == target_user_id:
                         self.gift_selections[telegram_id_str]["target_telegram_id"] = telegram_id
                         break
                 
-                # Показываем выбор чибиков для подарка
                 chibis, current_page, total_pages = self.get_user_chibis_for_gift(message.from_user.id, 1)
                 
                 if not chibis:
@@ -611,7 +578,6 @@ _Выбери, какого чибика подаришь_"""
                 
                 markup = types.InlineKeyboardMarkup()
                 
-                # Добавляем кнопки чибиков (по одной в ряд)
                 for chibi_name, count in chibis:
                     if count > 1:
                         btn_text = f"{chibi_name} ({count})"
@@ -619,7 +585,6 @@ _Выбери, какого чибика подаришь_"""
                         btn_text = chibi_name
                     markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
                 
-                # Добавляем навигацию
                 nav_buttons = []
                 if total_pages > 1:
                     nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
@@ -647,7 +612,6 @@ _Выбери, какого чибика подаришь_"""
             try:
                 telegram_id_str = str(message.from_user.id)
                 
-                # Получаем активный заказ пользователя
                 user_order_id, user_order_data = self.get_user_active_order(message.from_user.id)
                 
                 cantina_text = """*🕍 Кантина*
@@ -655,11 +619,9 @@ _Отличное место! Сборище наемников. Здесь мо
                 
                 markup = types.InlineKeyboardMarkup()
                 
-                # Если у пользователя есть активный заказ, показываем его
                 if user_order_id is not None:
-                    creator_name = self.users[telegram_id_str].get('first_name', 'Неизвестный')
                     btn_my_order = types.InlineKeyboardButton(
-                        f"🔹 {creator_name}",
+                        f"🔹 {user_order_data['chibi_name']} - 💰{user_order_data['reward']}",
                         callback_data="cantina_view_my_order"
                     )
                     markup.add(btn_my_order)
@@ -667,21 +629,24 @@ _Отличное место! Сборище наемников. Здесь мо
                     btn_create = types.InlineKeyboardButton("Создать заказ", callback_data="cantina_create_order")
                     markup.add(btn_create)
                 
-                # Получаем заказы других игроков
                 other_orders, current_page, total_pages = self.get_other_orders_paginated(message.from_user.id, 1)
                 
-                # Добавляем заказы других игроков
-                for order_id, order_data in other_orders:
-                    creator_id = order_data["creator_id"]
-                    creator_data = self.users.get(creator_id, {})
-                    creator_name = creator_data.get('first_name') or creator_data.get('username', 'Неизвестный')
+                for order_id, order_data, is_accepted in other_orders:
+                    creator_name = self.users.get(order_data["creator_id"], {}).get('first_name', 'Неизвестный')
+                    if not creator_name or creator_name == 'Неизвестный':
+                        creator_username = self.users.get(order_data["creator_id"], {}).get('username')
+                        if creator_username:
+                            creator_name = f"@{creator_username}"
+                        else:
+                            creator_name = "Неизвестный"
+                    
+                    prefix = "🔸" if is_accepted else ""
                     btn_order = types.InlineKeyboardButton(
-                        f"{creator_name}",
+                        f"{prefix} {order_data['chibi_name']} - 💰{order_data['reward']} ({creator_name})",
                         callback_data=f"cantina_view_order_{order_id}"
                     )
                     markup.add(btn_order)
                 
-                # Добавляем навигацию если есть другие заказы
                 if total_pages > 1:
                     nav_buttons = []
                     if current_page > 1:
@@ -705,20 +670,19 @@ _Отличное место! Сборище наемников. Здесь мо
                 logger.error(f"Ошибка при открытии кантины: {e}")
                 self.bot.send_message(message.chat.id, "❌ Ошибка при открытии кантины. Попробуйте позже.")
 
-        # Обработчик текстовых сообщений для ввода цены
         @self.bot.message_handler(func=lambda message: True)
         def text_handler(message):
             try:
                 telegram_id_str = str(message.from_user.id)
                 
-                # Проверяем, ожидает ли пользователь ввода цены
-                if (telegram_id_str in self.user_states and 
-                    self.user_states[telegram_id_str] == "waiting_for_reward"):
+                if self.user_states.get(telegram_id_str) == "waiting_for_reward":
+                    # Удаляем сообщение с вводом цены
+                    self.bot.delete_message(message.chat.id, message.message_id)
                     
                     try:
                         reward = int(message.text)
+                        recommended_price = random.randint(32, 45)
                         
-                        # Проверяем диапазон цены
                         if reward < 25:
                             self.bot.send_message(
                                 message.chat.id,
@@ -747,7 +711,6 @@ _Укажи, какого чибика охотники будут искать,
                         
                         markup = types.InlineKeyboardMarkup()
                         
-                        # Кнопка выбора чибика
                         if self.user_order_creation[telegram_id_str]["chibi_name"]:
                             btn_chibi = types.InlineKeyboardButton(
                                 self.user_order_creation[telegram_id_str]["chibi_name"],
@@ -756,17 +719,16 @@ _Укажи, какого чибика охотники будут искать,
                         else:
                             btn_chibi = types.InlineKeyboardButton("Выбрать чибика", callback_data="cantina_select_chibi")
                         
-                        # Кнопка установки награды
                         btn_reward = types.InlineKeyboardButton(
-                            f"Твоя цена: {reward}",
+                            f"Твоя цена: {self.user_order_creation[telegram_id_str]['reward']}",
                             callback_data="cantina_set_reward"
                         )
                         
                         markup.add(btn_chibi)
                         markup.add(btn_reward)
                         
-                        # Кнопка подтверждения
-                        if self.user_order_creation[telegram_id_str]["chibi_name"]:
+                        if (self.user_order_creation[telegram_id_str]["chibi_name"] and 
+                            self.user_order_creation[telegram_id_str]["reward"]):
                             btn_confirm = types.InlineKeyboardButton("Подтвердить", callback_data="cantina_confirm_order")
                             markup.add(btn_confirm)
                         else:
@@ -783,20 +745,18 @@ _Укажи, какого чибика охотники будут искать,
                     except ValueError:
                         self.bot.send_message(
                             message.chat.id,
-                            "❌ Пожалуйста, введи число от 25 до 440",
+                            "❌ Пожалуйста, введи число!",
                             parse_mode='Markdown'
                         )
                 
             except Exception as e:
                 logger.error(f"Ошибка в текстовом обработчике: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
 
         # Обработчик callback для кнопок
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
             try:
                 if call.data == "task_complete":
-                    # Выполняем задание
                     telegram_id_str = str(call.from_user.id)
                     if telegram_id_str not in self.user_tasks or self.user_tasks[telegram_id_str] is None:
                         self.bot.answer_callback_query(call.id, "Задание уже выполнено!")
@@ -804,25 +764,19 @@ _Укажи, какого чибика охотники будут искать,
                     
                     task_data = self.user_tasks[telegram_id_str]
                     
-                    # Убираем один чибик из коллекции
                     if telegram_id_str in self.user_chibis and task_data["chibi"] in self.user_chibis[telegram_id_str]:
-                        # Удаляем первое вхождение чибика
                         self.user_chibis[telegram_id_str].remove(task_data["chibi"])
                     
-                    # Удаляем сообщение с заданием
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    # Отправляем стикер
                     sticker_id = "CAACAgIAAxkBAAE9Js9pAzTWs9gLLtl9Gqz_9V_4sbwXqgAC7EYAAjNREEqhVSL_nxyHZTYE"
                     self.bot.send_sticker(call.message.chat.id, sticker_id)
                     
-                    # Начисляем награду
                     reward = task_data["reward"]
                     if telegram_id_str not in self.user_coins:
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
                     
-                    # Отправляем сообщение о выполнении
                     user_nick = call.from_user.first_name or "путешественник"
                     complete_text = f"""*Ес! {user_nick}, ты выполнил таск!*
 _За это ты получаешь обещанную награду. Даже не буду гадать, сколько ты выбивал нужного чибика_
@@ -835,21 +789,17 @@ _За это ты получаешь обещанную награду. Даже
                         parse_mode='Markdown'
                     )
                     
-                    # Удаляем задание
                     self.user_tasks[telegram_id_str] = None
                     
                 elif call.data == "task_cannot_complete":
                     self.bot.answer_callback_query(call.id, "У тебя нет нужного чибика!")
                     
                 elif call.data == "task_skip":
-                    # Пропускаем задание
                     telegram_id_str = str(call.from_user.id)
-                    self.user_tasks[telegram_id_str] = None  # Удаляем задание
+                    self.user_tasks[telegram_id_str] = None
                     
-                    # Удаляем сообщение с заданием
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    # Отправляем сообщение о пропуске
                     skip_text = """✨*Ты пропустил таск. Жди новый!*
 _Осталось 8ч 59м_"""
                     
@@ -860,7 +810,6 @@ _Осталось 8ч 59м_"""
                     )
                     
                 elif call.data == "task_skip_confirm":
-                    # Подтверждение пропуска задания
                     telegram_id_str = str(call.from_user.id)
                     if telegram_id_str not in self.user_tasks or self.user_tasks[telegram_id_str] is None:
                         self.bot.answer_callback_query(call.id, "Нет активного задания!")
@@ -885,7 +834,6 @@ _Придется долго ждать следующее, но пропуск 
                     )
                     
                 elif call.data == "task_back":
-                    # Возвращаемся к заданию
                     telegram_id_str = str(call.from_user.id)
                     if telegram_id_str not in self.user_tasks or self.user_tasks[telegram_id_str] is None:
                         self.bot.answer_callback_query(call.id, "Нет активного задания!")
@@ -914,7 +862,6 @@ _Придется долго ждать следующее, но пропуск 
                     )
                     
                 elif call.data == "menu_warehouse":
-                    # Показываем меню склада
                     warehouse_text = """*📦 Перепутье*
 _Выбери, на какой раздел склада хочешь глянуть_"""
                     
@@ -935,7 +882,6 @@ _Выбери, на какой раздел склада хочешь гляну
                     )
                     
                 elif call.data.startswith("warehouse_chibis_"):
-                    # Показываем коллекцию чибиков
                     page = int(call.data.split("_")[2])
                     chibis, current_page, total_pages = self.get_user_chibis_paginated(call.from_user.id, page)
                     
@@ -945,7 +891,6 @@ _Великолепные и неповторимые. Ну, почти…
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Добавляем кнопки чибиков
                     if chibis:
                         for chibi_name, count in chibis:
                             if count > 1:
@@ -956,7 +901,6 @@ _Великолепные и неповторимые. Ну, почти…
                     else:
                         markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
                     
-                    # Добавляем навигацию
                     nav_buttons = []
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_chibis_{((current_page-2) % total_pages) + 1}"))
@@ -977,7 +921,6 @@ _Великолепные и неповторимые. Ну, почти…
                     )
                     
                 elif call.data.startswith("warehouse_items_"):
-                    # Показываем коллекцию предметов
                     page = int(call.data.split("_")[2])
                     items, current_page, total_pages = self.get_user_items_paginated(call.from_user.id, page)
                     
@@ -987,7 +930,6 @@ _Тут хранятся твои боксы. Других предметов в
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Добавляем кнопки предметов
                     if items:
                         for item_name, count in items:
                             if count > 1:
@@ -1001,7 +943,6 @@ _Тут хранятся твои боксы. Других предметов в
                     else:
                         markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
                     
-                    # Добавляем навигацию
                     nav_buttons = []
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_items_{((current_page-2) % total_pages) + 1}"))
@@ -1022,7 +963,6 @@ _Тут хранятся твои боксы. Других предметов в
                     )
                     
                 elif call.data == "open_chibi_pack":
-                    # Подтверждение открытия Чиби-пака
                     telegram_id_str = str(call.from_user.id)
                     pack_count = self.user_items.get(telegram_id_str, {}).get("🧧 Чиби-пак", 0)
                     
@@ -1051,82 +991,57 @@ _Хотя что тебе еще делать с ним? Разве что по�
                     )
                     
                 elif call.data.startswith("open_pack_"):
-                    # Открываем Чиби-пак
                     count = int(call.data.split("_")[2])
                     telegram_id_str = str(call.from_user.id)
                     
-                    # Проверяем, есть ли достаточно паков
                     current_packs = self.user_items.get(telegram_id_str, {}).get("🧧 Чиби-пак", 0)
                     if current_packs < count:
                         self.bot.answer_callback_query(call.id, "Недостаточно Чиби-паков!")
                         return
                     
-                    # Уменьшаем количество паков
                     self.user_items[telegram_id_str]["🧧 Чиби-пак"] = current_packs - count
                     
-                    # Открываем паки и получаем чибиков
                     for i in range(count):
-                        telegram_id_str = str(call.from_user.id)
-                        
-                        # Проверяем, есть ли принятый заказ
-                        accepted_order_id, accepted_order_data = self.get_user_accepted_order(call.from_user.id)
-                        
                         file_path, chibi_name, rarity = self.get_random_chibi(from_pack=True)
                         
                         if file_path is not None:
-                            # Проверяем, совпадает ли выпавший чибик с заказом
-                            if (accepted_order_id and 
-                                accepted_order_data and 
-                                chibi_name == accepted_order_data["chibi_name"]):
-                                
-                                # Помечаем, что у пользователя есть чибик для заказа
-                                self.cantina_orders[accepted_order_id]["accepted_by"][telegram_id_str]["has_chibi"] = True
-                                
-                                # Формируем специальное сообщение для заказного чибика
+                            telegram_id_str = str(call.from_user.id)
+                            active_hunt_order_id = self.user_active_hunts.get(telegram_id_str)
+                            hunt_chibi_needed = None
+                            if active_hunt_order_id and active_hunt_order_id in self.cantina_orders:
+                                hunt_chibi_needed = self.cantina_orders[active_hunt_order_id]["chibi_name"]
+                            
+                            if telegram_id_str not in self.user_chibis:
+                                self.user_chibis[telegram_id_str] = []
+                            self.user_chibis[telegram_id_str].append(chibi_name)
+                            
+                            chibi_count = self.get_chibi_count(call.from_user.id, chibi_name)
+                            
+                            rarity_emoji = "🔷" if rarity == "Common" else "💠"
+                            
+                            if hunt_chibi_needed and chibi_name == hunt_chibi_needed:
                                 chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
 _Этот чибик нужен тебе, чтобы выполнить заказ в кантине! Скорее сдай его, пока конкуренты тебя не опередили_
 `•••••••••••••••••••`
-Редкость: 🔷 _{rarity}_
-У тебя: *1*"""
-                                
-                                # Отправляем картинку с текстом
-                                with open(file_path, 'rb') as photo:
-                                    self.bot.send_photo(
-                                        call.message.chat.id,
-                                        photo,
-                                        caption=chibi_text,
-                                        parse_mode='Markdown'
-                                    )
-                                
+Редкость: {rarity_emoji} _{rarity}_
+У тебя: *{chibi_count}*"""
                             else:
-                                # Обычный чибик - добавляем в коллекцию
-                                if telegram_id_str not in self.user_chibis:
-                                    self.user_chibis[telegram_id_str] = []
-                                self.user_chibis[telegram_id_str].append(chibi_name)
-                                
-                                # Получаем количество этого чибика у пользователя
-                                chibi_count = self.get_chibi_count(call.from_user.id, chibi_name)
-                                
-                                # Формируем текст сообщения для выпавшего чибика
-                                rarity_emoji = "🔷" if rarity == "Common" else "💠"
                                 chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
 _Надеюсь, он тебе понравился!_
 `•••••••••••••••••••`
 Редкость: {rarity_emoji} _{rarity}_
 У тебя: {chibi_count}"""
-                                
-                                # Отправляем картинку с текстом
-                                with open(file_path, 'rb') as photo:
-                                    self.bot.send_photo(
-                                        call.message.chat.id,
-                                        photo,
-                                        caption=chibi_text,
-                                        parse_mode='Markdown'
-                                    )
+                            
+                            with open(file_path, 'rb') as photo:
+                                self.bot.send_photo(
+                                    call.message.chat.id,
+                                    photo,
+                                    caption=chibi_text,
+                                    parse_mode='Markdown'
+                                )
                     
                     self.bot.answer_callback_query(call.id, f"Открыто {count} Чиби-пак(ов)!")
                     
-                    # Возвращаемся к предметам
                     items, current_page, total_pages = self.get_user_items_paginated(call.from_user.id, 1)
                     
                     items_text = f"""*📦 Твои предметы* 
@@ -1168,7 +1083,6 @@ _Тут хранятся твои боксы. Других предметов в
                     )
                     
                 elif call.data == "mart_chibi_pack":
-                    # Показываем покупку Чиби-пака
                     pack_text = """🎏 *Хочешь купить этот прекрасный Чиби-пак?*
 _Да брось, знаю что так руки и чешутся!_"""
                     
@@ -1187,7 +1101,6 @@ _Да брось, знаю что так руки и чешутся!_"""
                     )
                     
                 elif call.data == "buy_chibi_pack":
-                    # Покупаем Чиби-пак
                     telegram_id_str = str(call.from_user.id)
                     coins = self.user_coins.get(telegram_id_str, 0)
                     
@@ -1195,10 +1108,8 @@ _Да брось, знаю что так руки и чешутся!_"""
                         self.bot.answer_callback_query(call.id, "Недостаточно коинов! Нужно 120.")
                         return
                     
-                    # Списываем коины
                     self.user_coins[telegram_id_str] = coins - 120
                     
-                    # Добавляем Чиби-пак
                     if telegram_id_str not in self.user_items:
                         self.user_items[telegram_id_str] = {}
                     
@@ -1209,7 +1120,6 @@ _Да брось, знаю что так руки и чешутся!_"""
                     
                     self.bot.answer_callback_query(call.id, "Чиби-пак куплен!")
                     
-                    # Возвращаемся в лавку
                     mart_text = """🎏 *Лавка джавы*
 _Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!_"""
                     
@@ -1226,7 +1136,6 @@ _Джавы, может, и не отличаются умом, но зато т
                     )
                     
                 elif call.data == "mart_back":
-                    # Возвращаемся в лавку
                     mart_text = """🎏 *Лавка джавы*
 _Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!_"""
                     
@@ -1243,11 +1152,9 @@ _Джавы, может, и не отличаются умом, но зато т
                     )
                     
                 elif call.data == "menu_bonus":
-                    # Ежедневный бонус
                     telegram_id_str = str(call.from_user.id)
                     bonus = random.randint(7, 19)
                     
-                    # Начисляем бонус
                     if telegram_id_str not in self.user_coins:
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += bonus
@@ -1266,7 +1173,6 @@ _Ты только что получил ежедневный бонус!_
                     )
                     
                 elif call.data == "menu_back":
-                    # Возвращаемся к главному меню
                     menu_text = """*✨ Меню* 
 _Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались_"""
                     
@@ -1287,7 +1193,6 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     )
                     
                 elif call.data.startswith("gift_page_"):
-                    # Переключение страницы при выборе подарка
                     page = int(call.data.split("_")[2])
                     telegram_id_str = str(call.from_user.id)
                     
@@ -1302,7 +1207,6 @@ _Выбери, какого чибика подаришь_"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Добавляем кнопки чибиков (по одной в ряд)
                     for chibi_name, count in chibis:
                         if count > 1:
                             btn_text = f"{chibi_name} ({count})"
@@ -1310,7 +1214,6 @@ _Выбери, какого чибика подаришь_"""
                             btn_text = chibi_name
                         markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
                     
-                    # Добавляем навигацию
                     nav_buttons = []
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
@@ -1331,7 +1234,6 @@ _Выбери, какого чибика подаришь_"""
                     )
                     
                 elif call.data.startswith("gift_select_"):
-                    # Выбор чибика для подарка
                     chibi_name = call.data.replace("gift_select_", "")
                     telegram_id_str = str(call.from_user.id)
                     
@@ -1339,10 +1241,8 @@ _Выбери, какого чибика подаришь_"""
                         self.bot.answer_callback_query(call.id, "Сессия подарка истекла!")
                         return
                     
-                    # Сохраняем выбранного чибика
                     self.gift_selections[telegram_id_str]["chibi_name"] = chibi_name
                     
-                    # Показываем подтверждение
                     target_name = self.gift_selections[telegram_id_str]["target_name"]
                     
                     confirm_text = f"""✨ *Дарим чибика?*
@@ -1365,7 +1265,6 @@ _Ты уверен, что хочешь этого? Назад вернуть у
                     )
                     
                 elif call.data == "gift_confirm":
-                    # Подтверждение отправки подарка
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.gift_selections:
@@ -1377,27 +1276,21 @@ _Ты уверен, что хочешь этого? Назад вернуть у
                     target_telegram_id = gift_data["target_telegram_id"]
                     target_name = gift_data["target_name"]
                     
-                    # Проверяем, есть ли еще такой чибик у отправителя
                     if telegram_id_str not in self.user_chibis or chibi_name not in self.user_chibis[telegram_id_str]:
                         self.bot.answer_callback_query(call.id, "У тебя больше нет этого чибика!")
                         return
                     
-                    # Удаляем чибика у отправителя
                     self.user_chibis[telegram_id_str].remove(chibi_name)
                     
-                    # Добавляем чибика получателю
                     if target_telegram_id not in self.user_chibis:
                         self.user_chibis[target_telegram_id] = []
                     self.user_chibis[target_telegram_id].append(chibi_name)
                     
-                    # Удаляем сообщение с подтверждением
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    # Отправляем стикер отправителю
                     sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
                     self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
                     
-                    # Сообщение отправителю
                     sender_name = call.from_user.first_name or "Отправитель"
                     sender_text = f"""*✨ Чибик отправлен! 
 _Надеюсь, {target_name} он понравится!_*"""
@@ -1408,11 +1301,9 @@ _Надеюсь, {target_name} он понравится!_*"""
                         parse_mode='Markdown'
                     )
                     
-                    # Отправляем стикер получателю
                     sticker_id_receiver = "CAACAgIAAxkBAAE9OxxpBRLZ5OANTuRD-97sRPdCONwv0AACU0YAAkVlEErI0vjxKMrHnTYE"
                     self.bot.send_sticker(target_telegram_id, sticker_id_receiver)
                     
-                    # Сообщение получателю
                     receiver_text = f"""*💌 Тебе подарок!*
 _{sender_name} подарил тебе {chibi_name}!_"""
                     
@@ -1427,32 +1318,26 @@ _{sender_name} подарил тебе {chibi_name}!_"""
                         parse_mode='Markdown'
                     )
                     
-                    # Очищаем данные подарка
                     del self.gift_selections[telegram_id_str]
                     
                 elif call.data == "gift_cancel":
-                    # Отмена подарка
                     telegram_id_str = str(call.from_user.id)
                     
-                    # Удаляем данные подарка
                     if telegram_id_str in self.gift_selections:
                         del self.gift_selections[telegram_id_str]
                     
-                    # Удаляем сообщение
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
                 # Обработчики для кантины
                 elif call.data == "cantina_create_order":
-                    # Начинаем создание заказа
                     telegram_id_str = str(call.from_user.id)
                     
-                    # Проверяем, нет ли уже активного заказа
+                    # Проверяем, есть ли уже активный заказ
                     existing_order_id, existing_order_data = self.get_user_active_order(call.from_user.id)
                     if existing_order_id is not None:
                         self.bot.answer_callback_query(call.id, "У тебя уже есть активный заказ!")
                         return
                     
-                    # Инициализируем данные создания заказа
                     self.user_order_creation[telegram_id_str] = {
                         "chibi_name": None,
                         "reward": None
@@ -1463,10 +1348,7 @@ _Укажи, какого чибика охотники будут искать,
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Кнопка выбора чибика
                     btn_chibi = types.InlineKeyboardButton("Выбрать чибика", callback_data="cantina_select_chibi")
-                    
-                    # Кнопка установки награды
                     btn_reward = types.InlineKeyboardButton("Установить награду", callback_data="cantina_set_reward")
                     
                     markup.add(btn_chibi)
@@ -1482,7 +1364,6 @@ _Укажи, какого чибика охотники будут искать,
                     )
                     
                 elif call.data == "cantina_select_chibi":
-                    # Выбор чибика для заказа
                     chibis, current_page, total_pages = self.get_all_chibis_paginated(1)
                     
                     select_text = """🕍 *Выбираем жертву*
@@ -1490,11 +1371,9 @@ _Выбери чибика, которого_ *хочешь получить*"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Добавляем кнопки чибиков
                     for chibi_name in chibis:
                         markup.add(types.InlineKeyboardButton(chibi_name, callback_data=f"cantina_chibi_{chibi_name}"))
                     
-                    # Добавляем навигацию
                     nav_buttons = []
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"cantina_chibis_page_{((current_page-2) % total_pages) + 1}"))
@@ -1515,7 +1394,6 @@ _Выбери чибика, которого_ *хочешь получить*"""
                     )
                     
                 elif call.data.startswith("cantina_chibis_page_"):
-                    # Переключение страницы при выборе чибика
                     page = int(call.data.split("_")[3])
                     chibis, current_page, total_pages = self.get_all_chibis_paginated(page)
                     
@@ -1524,11 +1402,9 @@ _Выбери чибика, которого_ *хочешь получить*"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Добавляем кнопки чибиков
                     for chibi_name in chibis:
                         markup.add(types.InlineKeyboardButton(chibi_name, callback_data=f"cantina_chibi_{chibi_name}"))
                     
-                    # Добавляем навигацию
                     nav_buttons = []
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"cantina_chibis_page_{((current_page-2) % total_pages) + 1}"))
@@ -1549,7 +1425,6 @@ _Выбери чибика, которого_ *хочешь получить*"""
                     )
                     
                 elif call.data.startswith("cantina_chibi_"):
-                    # Выбор конкретного чибика
                     chibi_name = call.data.replace("cantina_chibi_", "")
                     telegram_id_str = str(call.from_user.id)
                     
@@ -1557,22 +1432,18 @@ _Выбери чибика, которого_ *хочешь получить*"""
                         self.bot.answer_callback_query(call.id, "Сессия создания заказа истекла!")
                         return
                     
-                    # Сохраняем выбранного чибика
                     self.user_order_creation[telegram_id_str]["chibi_name"] = chibi_name
                     
-                    # Возвращаемся к созданию заказа
                     create_text = """🕍 *Создаем заказ*
 _Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию_"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Кнопка выбора чибика
                     btn_chibi = types.InlineKeyboardButton(
                         chibi_name,
                         callback_data="cantina_select_chibi"
                     )
                     
-                    # Кнопка установки награды
                     if self.user_order_creation[telegram_id_str]["reward"]:
                         btn_reward = types.InlineKeyboardButton(
                             f"Твоя цена: {self.user_order_creation[telegram_id_str]['reward']}",
@@ -1584,7 +1455,6 @@ _Укажи, какого чибика охотники будут искать,
                     markup.add(btn_chibi)
                     markup.add(btn_reward)
                     
-                    # Кнопка подтверждения или назад
                     if self.user_order_creation[telegram_id_str]["reward"]:
                         btn_confirm = types.InlineKeyboardButton("Подтвердить", callback_data="cantina_confirm_order")
                         markup.add(btn_confirm)
@@ -1601,33 +1471,29 @@ _Укажи, какого чибика охотники будут искать,
                     )
                     
                 elif call.data == "cantina_set_reward":
-                    # Установка награды через текстовый ввод
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.user_order_creation:
                         self.bot.answer_callback_query(call.id, "Сессия создания заказа истекла!")
                         return
                     
-                    # Генерируем рекомендуемую цену
                     recommended_price = random.randint(32, 45)
+                    reward_text = f"""🕍 *Устанавливаем плату*
+_Установи награду, которую_ *ты* _заплатишь за выбранного чибика, если охотник доставит его тебе. Помни, что зарплата влияет на репутацию_
+||•••••••••••••••••||
+Введи цену и отправь мне. Рекомендованная цена : *{recommended_price}*"""
                     
                     # Устанавливаем состояние ожидания ввода цены
                     self.user_states[telegram_id_str] = "waiting_for_reward"
                     
-                    reward_text = f"""🕍 *Устанавливаем плату*
-_Установи награду, которую_ *ты* _заплатишь за выбранного чибика, если охотник доставит его тебе. Помни, что зарплата влияет на репутацию_
-||•••••••••••••••••||
-Введи цену и отправь мне. Рекомендованная цена : {recommended_price}"""
-                    
-                    self.bot.edit_message_text(
-                        reward_text,
+                    # Отправляем новое сообщение с инструкцией
+                    self.bot.send_message(
                         call.message.chat.id,
-                        call.message.message_id,
+                        reward_text,
                         parse_mode='Markdown'
                     )
                     
                 elif call.data == "cantina_confirm_order":
-                    # Подтверждение создания заказа
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.user_order_creation:
@@ -1660,7 +1526,6 @@ _Ты платишь:_ *{order_data['reward']}*"""
                     )
                     
                 elif call.data == "cantina_final_create":
-                    # Финальное создание заказа
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.user_order_creation:
@@ -1668,6 +1533,12 @@ _Ты платишь:_ *{order_data['reward']}*"""
                         return
                     
                     order_data = self.user_order_creation[telegram_id_str]
+                    
+                    # Проверяем, есть ли уже активный заказ
+                    existing_order_id, existing_order_data = self.get_user_active_order(call.from_user.id)
+                    if existing_order_id is not None:
+                        self.bot.answer_callback_query(call.id, "У тебя уже есть активный заказ!")
+                        return
                     
                     # Проверяем баланс
                     coins = self.user_coins.get(telegram_id_str, 0)
@@ -1685,10 +1556,12 @@ _Ты платишь:_ *{order_data['reward']}*"""
                         "chibi_name": order_data["chibi_name"],
                         "reward": order_data["reward"],
                         "status": "active",
-                        "created_date": datetime.now(),
-                        "accepted_by": {}  # user_id: {"has_chibi": False}
+                        "date_created": datetime.now()
                     }
                     self.next_order_id += 1
+                    
+                    # Инициализируем список принявших
+                    self.order_accepted_by[order_id] = []
                     
                     # Удаляем сообщение
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -1709,12 +1582,10 @@ _Отличное место! Сборище наемников. Здесь мо
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Показываем заказ пользователя
                     user_order_id, user_order_data = self.get_user_active_order(call.from_user.id)
                     if user_order_id is not None:
-                        creator_name = self.users[telegram_id_str].get('first_name', 'Неизвестный')
                         btn_my_order = types.InlineKeyboardButton(
-                            f"🔹 {creator_name}",
+                            f"🔹 {user_order_data['chibi_name']} - 💰{user_order_data['reward']}",
                             callback_data="cantina_view_my_order"
                         )
                         markup.add(btn_my_order)
@@ -1722,21 +1593,24 @@ _Отличное место! Сборище наемников. Здесь мо
                         btn_create = types.InlineKeyboardButton("Создать заказ", callback_data="cantina_create_order")
                         markup.add(btn_create)
                     
-                    # Получаем заказы других игроков
                     other_orders, current_page, total_pages = self.get_other_orders_paginated(call.from_user.id, 1)
                     
-                    # Добавляем заказы других игроков
-                    for order_id, order_data in other_orders:
-                        creator_id = order_data["creator_id"]
-                        creator_data = self.users.get(creator_id, {})
-                        creator_name = creator_data.get('first_name') or creator_data.get('username', 'Неизвестный')
+                    for order_id, order_data, is_accepted in other_orders:
+                        creator_name = self.users.get(order_data["creator_id"], {}).get('first_name', 'Неизвестный')
+                        if not creator_name or creator_name == 'Неизвестный':
+                            creator_username = self.users.get(order_data["creator_id"], {}).get('username')
+                            if creator_username:
+                                creator_name = f"@{creator_username}"
+                            else:
+                                creator_name = "Неизвестный"
+                        
+                        prefix = "🔸" if is_accepted else ""
                         btn_order = types.InlineKeyboardButton(
-                            f"{creator_name}",
+                            f"{prefix} {order_data['chibi_name']} - 💰{order_data['reward']} ({creator_name})",
                             callback_data=f"cantina_view_order_{order_id}"
                         )
                         markup.add(btn_order)
                     
-                    # Добавляем навигацию если есть другие заказы
                     if total_pages > 1:
                         nav_buttons = []
                         if current_page > 1:
@@ -1757,10 +1631,8 @@ _Отличное место! Сборище наемников. Здесь мо
                     )
                     
                 elif call.data == "cantina_final_cancel":
-                    # Отмена создания заказа
                     telegram_id_str = str(call.from_user.id)
                     
-                    # Очищаем данные создания заказа
                     if telegram_id_str in self.user_order_creation:
                         del self.user_order_creation[telegram_id_str]
                     
@@ -1772,7 +1644,6 @@ _Отличное место! Сборище наемников. Здесь мо
                     )
                     
                 elif call.data == "cantina_back_to_create":
-                    # Возврат к созданию заказа
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.user_order_creation:
@@ -1784,7 +1655,6 @@ _Укажи, какого чибика охотники будут искать,
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Кнопка выбора чибика
                     if self.user_order_creation[telegram_id_str]["chibi_name"]:
                         btn_chibi = types.InlineKeyboardButton(
                             self.user_order_creation[telegram_id_str]["chibi_name"],
@@ -1793,7 +1663,6 @@ _Укажи, какого чибика охотники будут искать,
                     else:
                         btn_chibi = types.InlineKeyboardButton("Выбрать чибика", callback_data="cantina_select_chibi")
                     
-                    # Кнопка установки награды
                     if self.user_order_creation[telegram_id_str]["reward"]:
                         btn_reward = types.InlineKeyboardButton(
                             f"Твоя цена: {self.user_order_creation[telegram_id_str]['reward']}",
@@ -1805,9 +1674,13 @@ _Укажи, какого чибика охотники будут искать,
                     markup.add(btn_chibi)
                     markup.add(btn_reward)
                     
-                    # Кнопка назад
-                    btn_back = types.InlineKeyboardButton("Назад", callback_data="cantina_back")
-                    markup.add(btn_back)
+                    if (self.user_order_creation[telegram_id_str]["chibi_name"] and 
+                        self.user_order_creation[telegram_id_str]["reward"]):
+                        btn_confirm = types.InlineKeyboardButton("Подтвердить", callback_data="cantina_confirm_order")
+                        markup.add(btn_confirm)
+                    else:
+                        btn_back = types.InlineKeyboardButton("Назад", callback_data="cantina_back")
+                        markup.add(btn_back)
                     
                     self.bot.edit_message_text(
                         create_text,
@@ -1818,18 +1691,11 @@ _Укажи, какого чибика охотники будут искать,
                     )
                     
                 elif call.data == "cantina_back":
-                    # Возврат в кантину
                     telegram_id_str = str(call.from_user.id)
                     
-                    # Очищаем данные создания заказа
                     if telegram_id_str in self.user_order_creation:
                         del self.user_order_creation[telegram_id_str]
                     
-                    # Очищаем состояние
-                    if telegram_id_str in self.user_states:
-                        self.user_states[telegram_id_str] = None
-                    
-                    # Показываем кантину
                     user_order_id, user_order_data = self.get_user_active_order(call.from_user.id)
                     
                     cantina_text = """*🕍 Кантина*
@@ -1837,11 +1703,9 @@ _Отличное место! Сборище наемников. Здесь мо
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Если у пользователя есть активный заказ, показываем его
                     if user_order_id is not None:
-                        creator_name = self.users[telegram_id_str].get('first_name', 'Неизвестный')
                         btn_my_order = types.InlineKeyboardButton(
-                            f"🔹 {creator_name}",
+                            f"🔹 {user_order_data['chibi_name']} - 💰{user_order_data['reward']}",
                             callback_data="cantina_view_my_order"
                         )
                         markup.add(btn_my_order)
@@ -1849,21 +1713,24 @@ _Отличное место! Сборище наемников. Здесь мо
                         btn_create = types.InlineKeyboardButton("Создать заказ", callback_data="cantina_create_order")
                         markup.add(btn_create)
                     
-                    # Получаем заказы других игроков
                     other_orders, current_page, total_pages = self.get_other_orders_paginated(call.from_user.id, 1)
                     
-                    # Добавляем заказы других игроков
-                    for order_id, order_data in other_orders:
-                        creator_id = order_data["creator_id"]
-                        creator_data = self.users.get(creator_id, {})
-                        creator_name = creator_data.get('first_name') or creator_data.get('username', 'Неизвестный')
+                    for order_id, order_data, is_accepted in other_orders:
+                        creator_name = self.users.get(order_data["creator_id"], {}).get('first_name', 'Неизвестный')
+                        if not creator_name or creator_name == 'Неизвестный':
+                            creator_username = self.users.get(order_data["creator_id"], {}).get('username')
+                            if creator_username:
+                                creator_name = f"@{creator_username}"
+                            else:
+                                creator_name = "Неизвестный"
+                        
+                        prefix = "🔸" if is_accepted else ""
                         btn_order = types.InlineKeyboardButton(
-                            f"{creator_name}",
+                            f"{prefix} {order_data['chibi_name']} - 💰{order_data['reward']} ({creator_name})",
                             callback_data=f"cantina_view_order_{order_id}"
                         )
                         markup.add(btn_order)
                     
-                    # Добавляем навигацию если есть другие заказы
                     if total_pages > 1:
                         nav_buttons = []
                         if current_page > 1:
@@ -1885,7 +1752,6 @@ _Отличное место! Сборище наемников. Здесь мо
                     )
                     
                 elif call.data.startswith("cantina_orders_page_"):
-                    # Переключение страницы заказов
                     page = int(call.data.split("_")[3])
                     
                     user_order_id, user_order_data = self.get_user_active_order(call.from_user.id)
@@ -1895,11 +1761,9 @@ _Отличное место! Сборище наемников. Здесь мо
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Если у пользователя есть активный заказ, показываем его
                     if user_order_id is not None:
-                        creator_name = self.users[str(call.from_user.id)].get('first_name', 'Неизвестный')
                         btn_my_order = types.InlineKeyboardButton(
-                            f"🔹 {creator_name}",
+                            f"🔹 {user_order_data['chibi_name']} - 💰{user_order_data['reward']}",
                             callback_data="cantina_view_my_order"
                         )
                         markup.add(btn_my_order)
@@ -1907,21 +1771,24 @@ _Отличное место! Сборище наемников. Здесь мо
                         btn_create = types.InlineKeyboardButton("Создать заказ", callback_data="cantina_create_order")
                         markup.add(btn_create)
                     
-                    # Получаем заказы других игроков
                     other_orders, current_page, total_pages = self.get_other_orders_paginated(call.from_user.id, page)
                     
-                    # Добавляем заказы других игроков
-                    for order_id, order_data in other_orders:
-                        creator_id = order_data["creator_id"]
-                        creator_data = self.users.get(creator_id, {})
-                        creator_name = creator_data.get('first_name') or creator_data.get('username', 'Неизвестный')
+                    for order_id, order_data, is_accepted in other_orders:
+                        creator_name = self.users.get(order_data["creator_id"], {}).get('first_name', 'Неизвестный')
+                        if not creator_name or creator_name == 'Неизвестный':
+                            creator_username = self.users.get(order_data["creator_id"], {}).get('username')
+                            if creator_username:
+                                creator_name = f"@{creator_username}"
+                            else:
+                                creator_name = "Неизвестный"
+                        
+                        prefix = "🔸" if is_accepted else ""
                         btn_order = types.InlineKeyboardButton(
-                            f"{creator_name}",
+                            f"{prefix} {order_data['chibi_name']} - 💰{order_data['reward']} ({creator_name})",
                             callback_data=f"cantina_view_order_{order_id}"
                         )
                         markup.add(btn_order)
                     
-                    # Добавляем навигацию если есть другие заказы
                     if total_pages > 1:
                         nav_buttons = []
                         if current_page > 1:
@@ -1943,25 +1810,21 @@ _Отличное место! Сборище наемников. Здесь мо
                     )
                     
                 elif call.data == "cantina_view_my_order":
-                    # Просмотр своего заказа
                     telegram_id_str = str(call.from_user.id)
-                    user_order_id, user_order_data = self.get_user_active_order(call.from_user.id)
+                    order_id, order_data = self.get_user_active_order(call.from_user.id)
                     
-                    if user_order_id is None:
+                    if order_id is None:
                         self.bot.answer_callback_query(call.id, "Заказ не найден!")
                         return
                     
-                    # Подсчитываем количество принявших
-                    accepted_count = len(user_order_data["accepted_by"])
-                    
-                    # Форматируем дату
-                    created_date = self.format_date(user_order_data["created_date"])
+                    accepted_count = len(self.order_accepted_by.get(order_id, []))
+                    date_str = self.format_date(order_data["date_created"])
                     
                     order_text = f"""*🕍 Твой заказ* 
 _Выбери, что хочешь сделать_
 ||•••••••••••••••••||
-Взялись:* {accepted_count}*
-Выложен:* {created_date}*"""
+Взялись: *{accepted_count}*
+Выложен: *{date_str}*"""
                     
                     markup = types.InlineKeyboardMarkup()
                     btn_cancel = types.InlineKeyboardButton("🙅‍♂️ Отозвать", callback_data="cantina_cancel_my_order")
@@ -1978,34 +1841,38 @@ _Выбери, что хочешь сделать_
                     )
                     
                 elif call.data == "cantina_cancel_my_order":
-                    # Отзыв своего заказа
                     telegram_id_str = str(call.from_user.id)
-                    user_order_id, user_order_data = self.get_user_active_order(call.from_user.id)
+                    order_id, order_data = self.get_user_active_order(call.from_user.id)
                     
-                    if user_order_id is None:
+                    if order_id is None:
                         self.bot.answer_callback_query(call.id, "Заказ не найден!")
                         return
                     
-                    # Возвращаем коины
-                    reward = user_order_data["reward"]
+                    # Возвращаем деньги
+                    reward = order_data["reward"]
                     if telegram_id_str not in self.user_coins:
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
                     
-                    # Уведомляем всех принявших
-                    for accepted_user_id in user_order_data["accepted_by"]:
-                        try:
-                            user_name = self.users.get(accepted_user_id, {}).get('first_name', 'Игрок')
-                            self.bot.send_message(
-                                accepted_user_id,
-                                f"*Хей, {user_name}!*\n_Заказ, который ты принял, был отозван! Соболезную_",
-                                parse_mode='Markdown'
-                            )
-                        except Exception as e:
-                            logger.error(f"Не удалось уведомить пользователя {accepted_user_id}: {e}")
-                    
                     # Удаляем заказ
-                    del self.cantina_orders[user_order_id]
+                    self.cantina_orders[order_id]["status"] = "cancelled"
+                    
+                    # Уведомляем всех принявших
+                    accepted_users = self.order_accepted_by.get(order_id, [])
+                    for user_id in accepted_users:
+                        if user_id in self.user_active_hunts:
+                            del self.user_active_hunts[user_id]
+                        
+                        user_name = self.users.get(user_id, {}).get('first_name', 'Игрок')
+                        self.bot.send_message(
+                            user_id,
+                            f"*Хей, {user_name}!*\n_Заказ, который ты принял, был отозван! Соболезную_",
+                            parse_mode='Markdown'
+                        )
+                    
+                    # Очищаем список принявших
+                    if order_id in self.order_accepted_by:
+                        del self.order_accepted_by[order_id]
                     
                     self.bot.edit_message_text(
                         "🕍 *Заказ отменен*",
@@ -2015,30 +1882,122 @@ _Выбери, что хочешь сделать_
                     )
                     
                 elif call.data.startswith("cantina_view_order_"):
-                    # Просмотр заказа другого игрока
                     order_id = int(call.data.split("_")[3])
+                    telegram_id_str = str(call.from_user.id)
                     
                     if order_id not in self.cantina_orders:
                         self.bot.answer_callback_query(call.id, "Заказ не найден!")
                         return
                     
                     order_data = self.cantina_orders[order_id]
-                    creator_id = order_data["creator_id"]
-                    creator_data = self.users.get(creator_id, {})
-                    creator_name = creator_data.get('first_name') or creator_data.get('username', 'Неизвестный')
                     
-                    order_text = f"""*🕍 Заказ игрока {creator_name}*
+                    # Проверяем, принял ли пользователь уже этот заказ
+                    is_accepted = telegram_id_str in self.order_accepted_by.get(order_id, [])
+                    
+                    if is_accepted:
+                        # Показываем интерфейс сдачи заказа
+                        has_chibi = self.get_chibi_count(call.from_user.id, order_data["chibi_name"]) > 0
+                        button_text = "✅ Сдать заказ (1/1)" if has_chibi else "Сдать заказ (0/1)"
+                        
+                        order_text = f"""🕍*Твой текущий заказ*
+_Это заказ от игрока {self.users.get(order_data['creator_id'], {}).get('first_name', 'Неизвестный')}, который ты принял в кантине, и вся о нем инфа_ 
+||•••••••••••••••••||
+Требуется: *{order_data['chibi_name']}* 
+Плата: *{order_data['reward']}*"""
+                        
+                        markup = types.InlineKeyboardMarkup(row_width=2)
+                        btn_complete = types.InlineKeyboardButton(
+                            button_text, 
+                            callback_data=f"cantina_complete_order_{order_id}" if has_chibi else "cantina_cannot_complete"
+                        )
+                        btn_refuse = types.InlineKeyboardButton("Отказаться", callback_data=f"cantina_refuse_order_{order_id}")
+                        btn_back = types.InlineKeyboardButton("Назад", callback_data="cantina_back")
+                        markup.add(btn_complete, btn_refuse)
+                        markup.add(btn_back)
+                        
+                        self.bot.edit_message_text(
+                            order_text,
+                            call.message.chat.id,
+                            call.message.message_id,
+                            reply_markup=markup,
+                            parse_mode='Markdown'
+                        )
+                    else:
+                        # Показываем интерфейс принятия заказа
+                        creator_name = self.users.get(order_data["creator_id"], {}).get('first_name', 'Неизвестный')
+                        if not creator_name or creator_name == 'Неизвестный':
+                            creator_username = self.users.get(order_data["creator_id"], {}).get('username')
+                            if creator_username:
+                                creator_name = f"@{creator_username}"
+                            else:
+                                creator_name = "Неизвестный"
+                        
+                        order_text = f"""*🕍 Заказ игрока {creator_name}*
 _Подумай, насколько тебе это выгодно, и прими решение_ 
 ||•••••••••••••••••||
 Требуется: {order_data['chibi_name']}
 Плата: *💰 {order_data['reward']}*"""
+                        
+                        markup = types.InlineKeyboardMarkup(row_width=2)
+                        btn_accept = types.InlineKeyboardButton("Принять", callback_data=f"cantina_accept_order_{order_id}")
+                        btn_howto = types.InlineKeyboardButton("Как охотиться?", url="https://telegra.ph/KANTINA--CHIBIKI-11-01")
+                        btn_back = types.InlineKeyboardButton("Назад", callback_data="cantina_back")
+                        markup.add(btn_accept, btn_howto)
+                        markup.add(btn_back)
+                        
+                        self.bot.edit_message_text(
+                            order_text,
+                            call.message.chat.id,
+                            call.message.message_id,
+                            reply_markup=markup,
+                            parse_mode='Markdown'
+                        )
+                    
+                elif call.data.startswith("cantina_accept_order_"):
+                    order_id = int(call.data.split("_")[3])
+                    telegram_id_str = str(call.from_user.id)
+                    
+                    if order_id not in self.cantina_orders:
+                        self.bot.answer_callback_query(call.id, "Заказ не найден!")
+                        return
+                    
+                    # Проверяем, нет ли уже активной охоты
+                    if telegram_id_str in self.user_active_hunts:
+                        self.bot.answer_callback_query(call.id, "У тебя уже есть активный заказ!")
+                        return
+                    
+                    # Добавляем пользователя в список принявших
+                    if order_id not in self.order_accepted_by:
+                        self.order_accepted_by[order_id] = []
+                    
+                    if telegram_id_str not in self.order_accepted_by[order_id]:
+                        self.order_accepted_by[order_id].append(telegram_id_str)
+                    
+                    # Устанавливаем активную охоту
+                    self.user_active_hunts[telegram_id_str] = order_id
+                    
+                    self.bot.answer_callback_query(call.id, "Заказ принят!")
+                    
+                    # Возвращаем к просмотру заказа (теперь он будет показывать интерфейс сдачи)
+                    order_data = self.cantina_orders[order_id]
+                    
+                    has_chibi = self.get_chibi_count(call.from_user.id, order_data["chibi_name"]) > 0
+                    button_text = "✅ Сдать заказ (1/1)" if has_chibi else "Сдать заказ (0/1)"
+                    
+                    order_text = f"""🕍*Твой текущий заказ*
+_Это заказ от игрока {self.users.get(order_data['creator_id'], {}).get('first_name', 'Неизвестный')}, который ты принял в кантине, и вся о нем инфа_ 
+||•••••••••••••••••||
+Требуется: *{order_data['chibi_name']}* 
+Плата: *{order_data['reward']}*"""
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
-                    btn_accept = types.InlineKeyboardButton("Принять", callback_data=f"cantina_accept_order_{order_id}")
-                    btn_how = types.InlineKeyboardButton("Как охотиться?", url="https://telegra.ph/KANTINA--CHIBIKI-11-01")
+                    btn_complete = types.InlineKeyboardButton(
+                        button_text, 
+                        callback_data=f"cantina_complete_order_{order_id}" if has_chibi else "cantina_cannot_complete"
+                    )
+                    btn_refuse = types.InlineKeyboardButton("Отказаться", callback_data=f"cantina_refuse_order_{order_id}")
                     btn_back = types.InlineKeyboardButton("Назад", callback_data="cantina_back")
-                    
-                    markup.add(btn_accept, btn_how)
+                    markup.add(btn_complete, btn_refuse)
                     markup.add(btn_back)
                     
                     self.bot.edit_message_text(
@@ -2049,8 +2008,7 @@ _Подумай, насколько тебе это выгодно, и прим�
                         parse_mode='Markdown'
                     )
                     
-                elif call.data.startswith("cantina_accept_order_"):
-                    # Принятие заказа
+                elif call.data.startswith("cantina_refuse_order_"):
                     order_id = int(call.data.split("_")[3])
                     telegram_id_str = str(call.from_user.id)
                     
@@ -2058,70 +2016,15 @@ _Подумай, насколько тебе это выгодно, и прим�
                         self.bot.answer_callback_query(call.id, "Заказ не найден!")
                         return
                     
-                    order_data = self.cantina_orders[order_id]
+                    # Удаляем пользователя из списка принявших
+                    if order_id in self.order_accepted_by and telegram_id_str in self.order_accepted_by[order_id]:
+                        self.order_accepted_by[order_id].remove(telegram_id_str)
                     
-                    # Проверяем, не принял ли уже пользователь этот заказ
-                    if telegram_id_str in order_data["accepted_by"]:
-                        self.bot.answer_callback_query(call.id, "Ты уже принял этот заказ!")
-                        return
+                    # Удаляем активную охоту
+                    if telegram_id_str in self.user_active_hunts:
+                        del self.user_active_hunts[telegram_id_str]
                     
-                    # Проверяем, нет ли у пользователя другого принятого заказа
-                    existing_accepted_order_id, existing_accepted_order_data = self.get_user_accepted_order(call.from_user.id)
-                    if existing_accepted_order_id is not None:
-                        self.bot.answer_callback_query(call.id, "У тебя уже есть принятый заказ!")
-                        return
-                    
-                    # Добавляем пользователя в принявшие
-                    order_data["accepted_by"][telegram_id_str] = {"has_chibi": False}
-                    
-                    # Показываем информацию о принятом заказе
-                    creator_id = order_data["creator_id"]
-                    creator_data = self.users.get(creator_id, {})
-                    creator_name = creator_data.get('first_name') or creator_data.get('username', 'Неизвестный')
-                    
-                    accepted_text = f"""🕍*Твой текущий заказ*
-_Это заказ от игрока {creator_name}, который ты принял в кантине, и вся о нем инфа_ 
-||•••••••••••••••••||
-Требуется: *{order_data['chibi_name']}* 
-Плата: *{order_data['reward']}*"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    
-                    # Проверяем, есть ли уже чибик для сдачи
-                    if order_data["accepted_by"][telegram_id_str]["has_chibi"]:
-                        btn_complete = types.InlineKeyboardButton("✅ Сдать заказ (1/1)", callback_data=f"cantina_complete_order_{order_id}")
-                    else:
-                        btn_complete = types.InlineKeyboardButton("Сдать заказ (0/1)", callback_data="cantina_cannot_complete")
-                    
-                    btn_reject = types.InlineKeyboardButton("Отказаться", callback_data=f"cantina_reject_order_{order_id}")
-                    
-                    markup.add(btn_complete)
-                    markup.add(btn_reject)
-                    
-                    self.bot.edit_message_text(
-                        accepted_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data.startswith("cantina_reject_order_"):
-                    # Отказ от принятого заказа
-                    order_id = int(call.data.split("_")[3])
-                    telegram_id_str = str(call.from_user.id)
-                    
-                    if order_id not in self.cantina_orders:
-                        self.bot.answer_callback_query(call.id, "Заказ не найден!")
-                        return
-                    
-                    order_data = self.cantina_orders[order_id]
-                    
-                    # Удаляем пользователя из принявших
-                    if telegram_id_str in order_data["accepted_by"]:
-                        del order_data["accepted_by"][telegram_id_str]
-                    
-                    self.bot.answer_callback_query(call.id, "Ты отказался от заказа!")
+                    self.bot.answer_callback_query(call.id, "Отказ от заказа принят!")
                     
                     # Возвращаем в кантину
                     cantina_text = """*🕍 Кантина*
@@ -2129,12 +2032,10 @@ _Отличное место! Сборище наемников. Здесь мо
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Показываем заказ пользователя (если есть)
                     user_order_id, user_order_data = self.get_user_active_order(call.from_user.id)
                     if user_order_id is not None:
-                        creator_name = self.users[telegram_id_str].get('first_name', 'Неизвестный')
                         btn_my_order = types.InlineKeyboardButton(
-                            f"🔹 {creator_name}",
+                            f"🔹 {user_order_data['chibi_name']} - 💰{user_order_data['reward']}",
                             callback_data="cantina_view_my_order"
                         )
                         markup.add(btn_my_order)
@@ -2142,21 +2043,24 @@ _Отличное место! Сборище наемников. Здесь мо
                         btn_create = types.InlineKeyboardButton("Создать заказ", callback_data="cantina_create_order")
                         markup.add(btn_create)
                     
-                    # Получаем заказы других игроков
                     other_orders, current_page, total_pages = self.get_other_orders_paginated(call.from_user.id, 1)
                     
-                    # Добавляем заказы других игроков
-                    for order_id, order_data in other_orders:
-                        creator_id = order_data["creator_id"]
-                        creator_data = self.users.get(creator_id, {})
-                        creator_name = creator_data.get('first_name') or creator_data.get('username', 'Неизвестный')
+                    for order_id, order_data, is_accepted in other_orders:
+                        creator_name = self.users.get(order_data["creator_id"], {}).get('first_name', 'Неизвестный')
+                        if not creator_name or creator_name == 'Неизвестный':
+                            creator_username = self.users.get(order_data["creator_id"], {}).get('username')
+                            if creator_username:
+                                creator_name = f"@{creator_username}"
+                            else:
+                                creator_name = "Неизвестный"
+                        
+                        prefix = "🔸" if is_accepted else ""
                         btn_order = types.InlineKeyboardButton(
-                            f"{creator_name}",
+                            f"{prefix} {order_data['chibi_name']} - 💰{order_data['reward']} ({creator_name})",
                             callback_data=f"cantina_view_order_{order_id}"
                         )
                         markup.add(btn_order)
                     
-                    # Добавляем навигацию если есть другие заказы
                     if total_pages > 1:
                         nav_buttons = []
                         if current_page > 1:
@@ -2178,7 +2082,6 @@ _Отличное место! Сборище наемников. Здесь мо
                     )
                     
                 elif call.data.startswith("cantina_complete_order_"):
-                    # Выполнение заказа
                     order_id = int(call.data.split("_")[3])
                     telegram_id_str = str(call.from_user.id)
                     
@@ -2188,25 +2091,25 @@ _Отличное место! Сборище наемников. Здесь мо
                     
                     order_data = self.cantina_orders[order_id]
                     
-                    # Проверяем, есть ли у пользователя чибик для сдачи
-                    if (telegram_id_str not in order_data["accepted_by"] or 
-                        not order_data["accepted_by"][telegram_id_str]["has_chibi"]):
+                    # Проверяем, есть ли чибик
+                    if self.get_chibi_count(call.from_user.id, order_data["chibi_name"]) == 0:
                         self.bot.answer_callback_query(call.id, "У тебя нет нужного чибика!")
                         return
                     
-                    # Проверяем, не выполнен ли уже заказ
-                    if order_data["status"] != "active":
-                        self.bot.answer_callback_query(call.id, "Этот заказ уже выполнен!")
-                        return
+                    # Удаляем чибик у охотника
+                    self.user_chibis[telegram_id_str].remove(order_data["chibi_name"])
                     
-                    # Помечаем заказ как выполненный
-                    order_data["status"] = "completed"
-                    
-                    # Начисляем награду выполнившему
+                    # Начисляем награду охотнику
                     reward = order_data["reward"]
                     if telegram_id_str not in self.user_coins:
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
+                    
+                    # Добавляем чибик создателю заказа
+                    creator_id = order_data["creator_id"]
+                    if creator_id not in self.user_chibis:
+                        self.user_chibis[creator_id] = []
+                    self.user_chibis[creator_id].append(order_data["chibi_name"])
                     
                     # Удаляем сообщение с заказом
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -2215,7 +2118,7 @@ _Отличное место! Сборище наемников. Здесь мо
                     sticker_id = "CAACAgIAAxkBAAE9Js1pAzTTQ9xRej9YYWAs_M_2sMGFnQAC2kkAAkZFCUqenx6Y9nShgTYE"
                     self.bot.send_sticker(call.message.chat.id, sticker_id)
                     
-                    # Сообщение о выполнении
+                    # Сообщение об успешном выполнении
                     user_name = call.from_user.first_name or "путешественник"
                     complete_text = f"""*{user_name}, ты выполнил заказ!*
 _Мои поздравления! Думаю, это было достаточно непросто, но ты — первый из наемников, кто справился с ним_ 
@@ -2229,35 +2132,43 @@ _Мои поздравления! Думаю, это было достаточн
                     )
                     
                     # Уведомляем создателя заказа
-                    creator_id = order_data["creator_id"]
-                    try:
-                        creator_name = self.users.get(creator_id, {}).get('first_name', 'Игрок')
-                        self.bot.send_message(
-                            creator_id,
-                            f"*Хей, {creator_name}!*\n_Твой заказ был выполнен! Наемник доставил тебе {order_data['chibi_name']}_",
-                            parse_mode='Markdown'
-                        )
-                    except Exception as e:
-                        logger.error(f"Не удалось уведомить создателя заказа {creator_id}: {e}")
+                    creator_name = self.users.get(creator_id, {}).get('first_name', 'Игрок')
+                    self.bot.send_message(
+                        creator_id,
+                        f"*🎉 Твой заказ выполнен!*\n_Охотник {user_name} доставил тебе {order_data['chibi_name']}!_",
+                        parse_mode='Markdown'
+                    )
                     
                     # Уведомляем всех остальных принявших
-                    for accepted_user_id in order_data["accepted_by"]:
-                        if accepted_user_id != telegram_id_str:
-                            try:
-                                user_name = self.users.get(accepted_user_id, {}).get('first_name', 'Игрок')
-                                self.bot.send_message(
-                                    accepted_user_id,
-                                    f"*Хей, {user_name}!*\n_Заказ, который ты принял, был завершен! Соболезную_",
-                                    parse_mode='Markdown'
-                                )
-                            except Exception as e:
-                                logger.error(f"Не удалось уведомить пользователя {accepted_user_id}: {e}")
+                    accepted_users = self.order_accepted_by.get(order_id, [])
+                    for user_id in accepted_users:
+                        if user_id != telegram_id_str:  # Не уведомляем исполнителя
+                            if user_id in self.user_active_hunts:
+                                del self.user_active_hunts[user_id]
+                            
+                            user_name = self.users.get(user_id, {}).get('first_name', 'Игрок')
+                            self.bot.send_message(
+                                user_id,
+                                f"*Хей, {user_name}!*\n_Заказ, который ты принял, был завершен! Соболезную_",
+                                parse_mode='Markdown'
+                            )
+                    
+                    # Удаляем заказ
+                    self.cantina_orders[order_id]["status"] = "completed"
+                    
+                    # Очищаем список принявших
+                    if order_id in self.order_accepted_by:
+                        del self.order_accepted_by[order_id]
+                    
+                    # Удаляем активные охоты для этого заказа
+                    for user_id in list(self.user_active_hunts.keys()):
+                        if self.user_active_hunts[user_id] == order_id:
+                            del self.user_active_hunts[user_id]
                     
                 elif call.data == "cantina_cannot_complete":
                     self.bot.answer_callback_query(call.id, "У тебя нет нужного чибика!")
                     
                 elif call.data == "chibi_click":
-                    # При нажатии на чибика ничего не происходит
                     self.bot.answer_callback_query(call.id)
                     
                 elif call.data == "item_click":
@@ -2265,6 +2176,9 @@ _Мои поздравления! Думаю, это было достаточн
                     
                 elif call.data == "empty":
                     self.bot.answer_callback_query(call.id, "Здесь пусто!")
+                    
+                elif call.data == "cantina_current_reward":
+                    self.bot.answer_callback_query(call.id, "Текущая цена")
                     
                 elif call.data == "cantina_orders_info":
                     self.bot.answer_callback_query(call.id, "Страница заказов")
