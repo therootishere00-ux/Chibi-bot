@@ -28,7 +28,10 @@ class ChibiBot:
         self.user_active_hunts = {}    # Храним активные охоты пользователей: {user_id: order_id}
         self.order_accepted_by = {}    # Храним кто принял заказы: {order_id: [user_id1, user_id2]}
         self.user_states = {}          # Храним состояния пользователей для ввода текста
+        self.user_chibi_timestamps = {} # Храним когда получены чибики: {user_id: {chibi_name: datetime}}
+        self.hunt_start_times = {}     # Храним время начала охоты: {user_id: {order_id: datetime}}
         self.next_order_id = 1
+        self.user_message_ownership = {} # Храним владельцев сообщений: {message_id: user_id}
         
     def generate_unique_user_id(self):
         attempts = 0
@@ -67,8 +70,37 @@ class ChibiBot:
             self.user_items[telegram_id_str] = {"🧧 Чиби-пак": 1}
             # Инициализируем коины
             self.user_coins[telegram_id_str] = 0
+            # Инициализируем временные метки чибиков
+            self.user_chibi_timestamps[telegram_id_str] = {}
             logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
+
+    def add_chibi_to_user(self, telegram_id, chibi_name):
+        """Добавляет чибика пользователю с временной меткой"""
+        telegram_id_str = str(telegram_id)
+        if telegram_id_str not in self.user_chibis:
+            self.user_chibis[telegram_id_str] = []
+        if telegram_id_str not in self.user_chibi_timestamps:
+            self.user_chibi_timestamps[telegram_id_str] = {}
+        
+        self.user_chibis[telegram_id_str].append(chibi_name)
+        # Сохраняем время получения чибика
+        self.user_chibi_timestamps[telegram_id_str][chibi_name] = datetime.now()
+
+    def get_fresh_chibi_count(self, telegram_id, chibi_name, hunt_start_time):
+        """Получает количество свежих чибиков (полученных после начала охоты)"""
+        telegram_id_str = str(telegram_id)
+        if (telegram_id_str not in self.user_chibis or 
+            telegram_id_str not in self.user_chibi_timestamps):
+            return 0
+        
+        count = 0
+        for chibi in self.user_chibis[telegram_id_str]:
+            if chibi == chibi_name:
+                chibi_time = self.user_chibi_timestamps[telegram_id_str].get(chibi_name)
+                if chibi_time and chibi_time > hunt_start_time:
+                    count += 1
+        return count
 
     def get_random_chibi(self, from_pack=False):
         """Получает случайный чиби из папки common или secret"""
@@ -322,9 +354,24 @@ _{task_data['phrase']}_
                  'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
         return f"{date.day}{months[date.month-1]} {date.year}"
 
+    def check_message_ownership(self, call):
+        """Проверяет, принадлежит ли сообщение пользователю"""
+        telegram_id_str = str(call.from_user.id)
+        message_id = call.message.message_id
+        
+        if message_id in self.user_message_ownership:
+            if self.user_message_ownership[message_id] != telegram_id_str:
+                self.bot.answer_callback_query(call.id, "Не твое!")
+                return False
+        return True
+
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
+            # Игнорируем команду /start в группах
+            if message.chat.type != 'private':
+                return
+                
             try:
                 user_data, is_new_user = self.get_or_create_user(
                     message.from_user.id,
@@ -350,13 +397,17 @@ _{task_data['phrase']}_
                         url=BOT_CONFIG['telegram_channel']
                     )
                     markup.add(btn_channel)
-                    self.bot.send_message(message.chat.id, welcome_text, reply_markup=markup, parse_mode='Markdown')
+                    sent_message = self.bot.send_message(message.chat.id, welcome_text, reply_markup=markup, parse_mode='Markdown')
+                    # Сохраняем владельца сообщения
+                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 else:
-                    self.bot.send_message(message.chat.id, BOT_TEXTS['already_started'], parse_mode='Markdown')
+                    sent_message = self.bot.send_message(message.chat.id, BOT_TEXTS['already_started'], parse_mode='Markdown')
+                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['myid'])
         def myid_handler(message):
@@ -365,11 +416,13 @@ _{task_data['phrase']}_
                 user_id = user_data['user_id']
                 
                 response_text = f"⭐️ Твой айди — `{user_id}`"
-                self.bot.send_message(message.chat.id, response_text, parse_mode='Markdown')
+                sent_message = self.bot.send_message(message.chat.id, response_text, parse_mode='Markdown')
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['balance'])
         def balance_handler(message):
@@ -378,11 +431,13 @@ _{task_data['phrase']}_
                 coins = self.user_coins.get(telegram_id_str, 0)
                 
                 balance_text = f"💰 У тебя — *{coins}* коинов!"
-                self.bot.send_message(message.chat.id, balance_text, parse_mode='Markdown')
+                sent_message = self.bot.send_message(message.chat.id, balance_text, parse_mode='Markdown')
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['mart'])
         def mart_handler(message):
@@ -394,16 +449,18 @@ _Джавы, может, и не отличаются умом, но зато т
                 btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
                 markup.add(btn_pack)
                 
-                self.bot.send_message(
+                sent_message = self.bot.send_message(
                     message.chat.id,
                     mart_text,
                     reply_markup=markup,
                     parse_mode='Markdown'
                 )
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии лавки: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка при открытии лавки. Попробуйте позже.")
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при открытии лавки. Попробуйте позже.")
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['chibi'])
         def chibi_handler(message):
@@ -412,19 +469,20 @@ _Джавы, может, и не отличаются умом, но зато т
                 file_path, chibi_name, rarity = self.get_random_chibi(from_pack=False)
                 
                 if file_path is None:
-                    self.bot.send_message(message.chat.id, "❌ Чиби временно недоступны. Попробуйте позже.")
+                    sent_message = self.bot.send_message(message.chat.id, "❌ Чиби временно недоступны. Попробуйте позже.")
+                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     return
                 
                 # Проверяем, есть ли активная охота у пользователя
                 active_hunt_order_id = self.user_active_hunts.get(telegram_id_str)
                 hunt_chibi_needed = None
+                hunt_start_time = None
                 if active_hunt_order_id and active_hunt_order_id in self.cantina_orders:
                     hunt_chibi_needed = self.cantina_orders[active_hunt_order_id]["chibi_name"]
+                    hunt_start_time = self.hunt_start_times.get(telegram_id_str, {}).get(active_hunt_order_id)
                 
                 # Добавляем чибика в коллекцию пользователя
-                if telegram_id_str not in self.user_chibis:
-                    self.user_chibis[telegram_id_str] = []
-                self.user_chibis[telegram_id_str].append(chibi_name)
+                self.add_chibi_to_user(message.from_user.id, chibi_name)
                 
                 # Получаем количество этого чибика у пользователя
                 chibi_count = self.get_chibi_count(message.from_user.id, chibi_name)
@@ -447,18 +505,20 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                 
                 # Отправляем картинку с текстом
                 with open(file_path, 'rb') as photo:
-                    self.bot.send_photo(
+                    sent_message = self.bot.send_photo(
                         message.chat.id,
                         photo,
                         caption=chibi_text,
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     
                 logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
                     
             except Exception as e:
                 logger.error(f"Ошибка при отправке чиби: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка при получении чиби. Попробуйте позже.")
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при получении чиби. Попробуйте позже.")
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['task'])
         def task_handler(message):
@@ -477,16 +537,18 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                 )
                 markup.add(btn_complete, btn_skip)
                 
-                self.bot.send_message(
+                sent_message = self.bot.send_message(
                     message.chat.id,
                     task_text,
                     reply_markup=markup,
                     parse_mode='Markdown'
                 )
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 
             except Exception as e:
                 logger.error(f"Ошибка при генерации задания: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка при создании задания. Попробуйте позже.")
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при создании задания. Попробуйте позже.")
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['menu'])
         def menu_handler(message):
@@ -502,26 +564,29 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 markup.add(btn_warehouse, btn_channel)
                 markup.add(btn_bonus)
                 
-                self.bot.send_message(
+                sent_message = self.bot.send_message(
                     message.chat.id,
                     menu_text,
                     reply_markup=markup,
                     parse_mode='Markdown'
                 )
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии меню: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка при открытии меню. Попробуйте позже.")
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при открытии меню. Попробуйте позже.")
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['gift'])
         def gift_handler(message):
             try:
                 if len(message.text.split()) < 2:
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         message.chat.id,
                         "❌ Неверный формат команды. Используй: `/gift [ID_пользователя]`",
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     return
                 
                 target_user_id = message.text.split()[1].strip()
@@ -536,19 +601,21 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                         break
                 
                 if not target_user_found:
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         message.chat.id,
                         "❌ Пользователь с таким ID не найден.",
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     return
                 
                 if str(message.from_user.id) in self.users and self.users[str(message.from_user.id)]['user_id'] == target_user_id:
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         message.chat.id,
                         "❌ Нельзя отправить подарок самому себе!",
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     return
                 
                 telegram_id_str = str(message.from_user.id)
@@ -566,11 +633,12 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 chibis, current_page, total_pages = self.get_user_chibis_for_gift(message.from_user.id, 1)
                 
                 if not chibis:
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         message.chat.id,
                         "❌ У тебя нет чибиков для подарка!",
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     return
                 
                 gift_text = f"""✨ *О, да ты у нас щедрый!*
@@ -596,16 +664,18 @@ _Выбери, какого чибика подаришь_"""
                 
                 markup.row(*nav_buttons)
                 
-                self.bot.send_message(
+                sent_message = self.bot.send_message(
                     message.chat.id,
                     gift_text,
                     reply_markup=markup,
                     parse_mode='Markdown'
                 )
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 
             except Exception as e:
                 logger.error(f"Ошибка при отправке подарка: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка при отправке подарка. Попробуйте позже.")
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при отправке подарка. Попробуйте позже.")
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['cantina'])
         def cantina_handler(message):
@@ -659,16 +729,18 @@ _Отличное место! Сборище наемников. Здесь мо
                     
                     markup.row(*nav_buttons)
                 
-                self.bot.send_message(
+                sent_message = self.bot.send_message(
                     message.chat.id,
                     cantina_text,
                     reply_markup=markup,
                     parse_mode='Markdown'
                 )
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии кантины: {e}")
-                self.bot.send_message(message.chat.id, "❌ Ошибка при открытии кантины. Попробуйте позже.")
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при открытии кантины. Попробуйте позже.")
+                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
 
         @self.bot.message_handler(func=lambda message: True)
         def text_handler(message):
@@ -684,18 +756,20 @@ _Отличное место! Сборище наемников. Здесь мо
                         recommended_price = random.randint(32, 45)
                         
                         if reward < 25:
-                            self.bot.send_message(
+                            sent_message = self.bot.send_message(
                                 message.chat.id,
                                 "❌ Слишком мало! Минимум — 25",
                                 parse_mode='Markdown'
                             )
+                            self.user_message_ownership[sent_message.message_id] = telegram_id_str
                             return
                         elif reward > 440:
-                            self.bot.send_message(
+                            sent_message = self.bot.send_message(
                                 message.chat.id,
                                 "❌ Слишком много! Максимум — 440",
                                 parse_mode='Markdown'
                             )
+                            self.user_message_ownership[sent_message.message_id] = telegram_id_str
                             return
                         
                         # Сохраняем цену
@@ -735,19 +809,21 @@ _Укажи, какого чибика охотники будут искать,
                             btn_back = types.InlineKeyboardButton("Назад", callback_data="cantina_back")
                             markup.add(btn_back)
                         
-                        self.bot.send_message(
+                        sent_message = self.bot.send_message(
                             message.chat.id,
                             create_text,
                             reply_markup=markup,
                             parse_mode='Markdown'
                         )
+                        self.user_message_ownership[sent_message.message_id] = telegram_id_str
                         
                     except ValueError:
-                        self.bot.send_message(
+                        sent_message = self.bot.send_message(
                             message.chat.id,
                             "❌ Пожалуйста, введи число!",
                             parse_mode='Markdown'
                         )
+                        self.user_message_ownership[sent_message.message_id] = telegram_id_str
                 
             except Exception as e:
                 logger.error(f"Ошибка в текстовом обработчике: {e}")
@@ -756,6 +832,10 @@ _Укажи, какого чибика охотники будут искать,
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
             try:
+                # Проверяем владельца сообщения
+                if not self.check_message_ownership(call):
+                    return
+
                 if call.data == "task_complete":
                     telegram_id_str = str(call.from_user.id)
                     if telegram_id_str not in self.user_tasks or self.user_tasks[telegram_id_str] is None:
@@ -783,11 +863,12 @@ _За это ты получаешь обещанную награду. Даже
 `•••••••••••••••`
 + 💰*{reward}* коинов"""
                     
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         call.message.chat.id,
                         complete_text,
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
                     
                     self.user_tasks[telegram_id_str] = None
                     
@@ -803,11 +884,12 @@ _За это ты получаешь обещанную награду. Даже
                     skip_text = """✨*Ты пропустил таск. Жди новый!*
 _Осталось 8ч 59м_"""
                     
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         call.message.chat.id,
                         skip_text,
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
                     
                 elif call.data == "task_skip_confirm":
                     telegram_id_str = str(call.from_user.id)
@@ -1008,12 +1090,12 @@ _Хотя что тебе еще делать с ним? Разве что по�
                             telegram_id_str = str(call.from_user.id)
                             active_hunt_order_id = self.user_active_hunts.get(telegram_id_str)
                             hunt_chibi_needed = None
+                            hunt_start_time = None
                             if active_hunt_order_id and active_hunt_order_id in self.cantina_orders:
                                 hunt_chibi_needed = self.cantina_orders[active_hunt_order_id]["chibi_name"]
+                                hunt_start_time = self.hunt_start_times.get(telegram_id_str, {}).get(active_hunt_order_id)
                             
-                            if telegram_id_str not in self.user_chibis:
-                                self.user_chibis[telegram_id_str] = []
-                            self.user_chibis[telegram_id_str].append(chibi_name)
+                            self.add_chibi_to_user(call.from_user.id, chibi_name)
                             
                             chibi_count = self.get_chibi_count(call.from_user.id, chibi_name)
                             
@@ -1033,12 +1115,13 @@ _Надеюсь, он тебе понравился!_
 У тебя: {chibi_count}"""
                             
                             with open(file_path, 'rb') as photo:
-                                self.bot.send_photo(
+                                sent_message = self.bot.send_photo(
                                     call.message.chat.id,
                                     photo,
                                     caption=chibi_text,
                                     parse_mode='Markdown'
                                 )
+                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
                     
                     self.bot.answer_callback_query(call.id, f"Открыто {count} Чиби-пак(ов)!")
                     
@@ -1295,11 +1378,12 @@ _Ты уверен, что хочешь этого? Назад вернуть у
                     sender_text = f"""*✨ Чибик отправлен! 
 _Надеюсь, {target_name} он понравится!_*"""
                     
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         call.message.chat.id,
                         sender_text,
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
                     
                     sticker_id_receiver = "CAACAgIAAxkBAAE9OxxpBRLZ5OANTuRD-97sRPdCONwv0AACU0YAAkVlEErI0vjxKMrHnTYE"
                     self.bot.send_sticker(target_telegram_id, sticker_id_receiver)
@@ -1311,12 +1395,13 @@ _{sender_name} подарил тебе {chibi_name}!_"""
                     btn_view = types.InlineKeyboardButton("Посмотреть", callback_data="warehouse_chibis_1")
                     markup.add(btn_view)
                     
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         target_telegram_id,
                         receiver_text,
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = target_telegram_id
                     
                     del self.gift_selections[telegram_id_str]
                     
@@ -1487,11 +1572,12 @@ _Установи награду, которую_ *ты* _заплатишь з�
                     self.user_states[telegram_id_str] = "waiting_for_reward"
                     
                     # Отправляем новое сообщение с инструкцией
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         call.message.chat.id,
                         reward_text,
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
                     
                 elif call.data == "cantina_confirm_order":
                     telegram_id_str = str(call.from_user.id)
@@ -1570,11 +1656,12 @@ _Ты платишь:_ *{order_data['reward']}*"""
                     del self.user_order_creation[telegram_id_str]
                     
                     # Отправляем сообщение кантины заново
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         call.message.chat.id,
                         "✅ Заказ создан!",
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
                     
                     # Показываем обновленную кантину
                     cantina_text = """*🕍 Кантина*
@@ -1623,12 +1710,13 @@ _Отличное место! Сборище наемников. Здесь мо
                         
                         markup.row(*nav_buttons)
                     
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         call.message.chat.id,
                         cantina_text,
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
                     
                 elif call.data == "cantina_final_cancel":
                     telegram_id_str = str(call.from_user.id)
@@ -1863,12 +1951,17 @@ _Выбери, что хочешь сделать_
                         if user_id in self.user_active_hunts:
                             del self.user_active_hunts[user_id]
                         
+                        # Удаляем время начала охоты
+                        if user_id in self.hunt_start_times and order_id in self.hunt_start_times[user_id]:
+                            del self.hunt_start_times[user_id][order_id]
+                        
                         user_name = self.users.get(user_id, {}).get('first_name', 'Игрок')
-                        self.bot.send_message(
+                        sent_message = self.bot.send_message(
                             user_id,
                             f"*Хей, {user_name}!*\n_Заказ, который ты принял, был отозван! Соболезную_",
                             parse_mode='Markdown'
                         )
+                        self.user_message_ownership[sent_message.message_id] = user_id
                     
                     # Очищаем список принявших
                     if order_id in self.order_accepted_by:
@@ -1891,13 +1984,31 @@ _Выбери, что хочешь сделать_
                     
                     order_data = self.cantina_orders[order_id]
                     
+                    # Проверяем, активен ли еще заказ
+                    if order_data["status"] != "active":
+                        self.bot.answer_callback_query(call.id, "Заказ уже завершен или отменен!")
+                        self.bot.edit_message_text(
+                            "🕍 *Заказ завершен*",
+                            call.message.chat.id,
+                            call.message.message_id,
+                            parse_mode='Markdown'
+                        )
+                        return
+                    
                     # Проверяем, принял ли пользователь уже этот заказ
                     is_accepted = telegram_id_str in self.order_accepted_by.get(order_id, [])
                     
                     if is_accepted:
                         # Показываем интерфейс сдачи заказа
-                        has_chibi = self.get_chibi_count(call.from_user.id, order_data["chibi_name"]) > 0
-                        button_text = "✅ Сдать заказ (1/1)" if has_chibi else "Сдать заказ (0/1)"
+                        hunt_start_time = self.hunt_start_times.get(telegram_id_str, {}).get(order_id)
+                        if not hunt_start_time:
+                            hunt_start_time = datetime.now()
+                            if telegram_id_str not in self.hunt_start_times:
+                                self.hunt_start_times[telegram_id_str] = {}
+                            self.hunt_start_times[telegram_id_str][order_id] = hunt_start_time
+                        
+                        has_fresh_chibi = self.get_fresh_chibi_count(call.from_user.id, order_data["chibi_name"], hunt_start_time) > 0
+                        button_text = "✅ Сдать заказ (1/1)" if has_fresh_chibi else "Сдать заказ (0/1)"
                         
                         order_text = f"""🕍*Твой текущий заказ*
 _Это заказ от игрока {self.users.get(order_data['creator_id'], {}).get('first_name', 'Неизвестный')}, который ты принял в кантине, и вся о нем инфа_ 
@@ -1908,7 +2019,7 @@ _Это заказ от игрока {self.users.get(order_data['creator_id'], {
                         markup = types.InlineKeyboardMarkup(row_width=2)
                         btn_complete = types.InlineKeyboardButton(
                             button_text, 
-                            callback_data=f"cantina_complete_order_{order_id}" if has_chibi else "cantina_cannot_complete"
+                            callback_data=f"cantina_complete_order_{order_id}" if has_fresh_chibi else "cantina_cannot_complete"
                         )
                         btn_refuse = types.InlineKeyboardButton("Отказаться", callback_data=f"cantina_refuse_order_{order_id}")
                         btn_back = types.InlineKeyboardButton("Назад", callback_data="cantina_back")
@@ -1961,6 +2072,11 @@ _Подумай, насколько тебе это выгодно, и прим�
                         self.bot.answer_callback_query(call.id, "Заказ не найден!")
                         return
                     
+                    # Проверяем, активен ли заказ
+                    if self.cantina_orders[order_id]["status"] != "active":
+                        self.bot.answer_callback_query(call.id, "Заказ уже завершен или отменен!")
+                        return
+                    
                     # Проверяем, нет ли уже активной охоты
                     if telegram_id_str in self.user_active_hunts:
                         self.bot.answer_callback_query(call.id, "У тебя уже есть активный заказ!")
@@ -1976,13 +2092,19 @@ _Подумай, насколько тебе это выгодно, и прим�
                     # Устанавливаем активную охоту
                     self.user_active_hunts[telegram_id_str] = order_id
                     
+                    # Сохраняем время начала охоты
+                    if telegram_id_str not in self.hunt_start_times:
+                        self.hunt_start_times[telegram_id_str] = {}
+                    self.hunt_start_times[telegram_id_str][order_id] = datetime.now()
+                    
                     self.bot.answer_callback_query(call.id, "Заказ принят!")
                     
                     # Возвращаем к просмотру заказа (теперь он будет показывать интерфейс сдачи)
                     order_data = self.cantina_orders[order_id]
                     
-                    has_chibi = self.get_chibi_count(call.from_user.id, order_data["chibi_name"]) > 0
-                    button_text = "✅ Сдать заказ (1/1)" if has_chibi else "Сдать заказ (0/1)"
+                    hunt_start_time = self.hunt_start_times[telegram_id_str][order_id]
+                    has_fresh_chibi = self.get_fresh_chibi_count(call.from_user.id, order_data["chibi_name"], hunt_start_time) > 0
+                    button_text = "✅ Сдать заказ (1/1)" if has_fresh_chibi else "Сдать заказ (0/1)"
                     
                     order_text = f"""🕍*Твой текущий заказ*
 _Это заказ от игрока {self.users.get(order_data['creator_id'], {}).get('first_name', 'Неизвестный')}, который ты принял в кантине, и вся о нем инфа_ 
@@ -1993,7 +2115,7 @@ _Это заказ от игрока {self.users.get(order_data['creator_id'], {
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     btn_complete = types.InlineKeyboardButton(
                         button_text, 
-                        callback_data=f"cantina_complete_order_{order_id}" if has_chibi else "cantina_cannot_complete"
+                        callback_data=f"cantina_complete_order_{order_id}" if has_fresh_chibi else "cantina_cannot_complete"
                     )
                     btn_refuse = types.InlineKeyboardButton("Отказаться", callback_data=f"cantina_refuse_order_{order_id}")
                     btn_back = types.InlineKeyboardButton("Назад", callback_data="cantina_back")
@@ -2023,6 +2145,10 @@ _Это заказ от игрока {self.users.get(order_data['creator_id'], {
                     # Удаляем активную охоту
                     if telegram_id_str in self.user_active_hunts:
                         del self.user_active_hunts[telegram_id_str]
+                    
+                    # Удаляем время начала охоты
+                    if telegram_id_str in self.hunt_start_times and order_id in self.hunt_start_times[telegram_id_str]:
+                        del self.hunt_start_times[telegram_id_str][order_id]
                     
                     self.bot.answer_callback_query(call.id, "Отказ от заказа принят!")
                     
@@ -2091,13 +2217,34 @@ _Отличное место! Сборище наемников. Здесь мо
                     
                     order_data = self.cantina_orders[order_id]
                     
-                    # Проверяем, есть ли чибик
-                    if self.get_chibi_count(call.from_user.id, order_data["chibi_name"]) == 0:
-                        self.bot.answer_callback_query(call.id, "У тебя нет нужного чибика!")
+                    # Проверяем, активен ли заказ
+                    if order_data["status"] != "active":
+                        self.bot.answer_callback_query(call.id, "Заказ уже завершен или отменен!")
                         return
                     
-                    # Удаляем чибик у охотника
-                    self.user_chibis[telegram_id_str].remove(order_data["chibi_name"])
+                    # Проверяем, есть ли свежий чибик
+                    hunt_start_time = self.hunt_start_times.get(telegram_id_str, {}).get(order_id)
+                    if not hunt_start_time:
+                        self.bot.answer_callback_query(call.id, "Ошибка времени охоты!")
+                        return
+                    
+                    if self.get_fresh_chibi_count(call.from_user.id, order_data["chibi_name"], hunt_start_time) == 0:
+                        self.bot.answer_callback_query(call.id, "У тебя нет свежего чибика для этого заказа!")
+                        return
+                    
+                    # Удаляем свежий чибик у охотника (первый попавшийся)
+                    if telegram_id_str in self.user_chibis and order_data["chibi_name"] in self.user_chibis[telegram_id_str]:
+                        # Находим индекс первого свежего чибика
+                        for i, chibi in enumerate(self.user_chibis[telegram_id_str]):
+                            if chibi == order_data["chibi_name"]:
+                                chibi_time = self.user_chibi_timestamps[telegram_id_str].get(order_data["chibi_name"])
+                                if chibi_time and chibi_time > hunt_start_time:
+                                    del self.user_chibis[telegram_id_str][i]
+                                    # Обновляем временные метки
+                                    if (order_data["chibi_name"] in self.user_chibi_timestamps[telegram_id_str] and
+                                        self.user_chibi_timestamps[telegram_id_str][order_data["chibi_name"]] == chibi_time):
+                                        del self.user_chibi_timestamps[telegram_id_str][order_data["chibi_name"]]
+                                    break
                     
                     # Начисляем награду охотнику
                     reward = order_data["reward"]
@@ -2125,19 +2272,21 @@ _Мои поздравления! Думаю, это было достаточн
 ||••••••••••••••••••||
 + *💰 {reward}* чибикоинов"""
                     
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         call.message.chat.id,
                         complete_text,
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
                     
                     # Уведомляем создателя заказа
                     creator_name = self.users.get(creator_id, {}).get('first_name', 'Игрок')
-                    self.bot.send_message(
+                    sent_message = self.bot.send_message(
                         creator_id,
                         f"*🎉 Твой заказ выполнен!*\n_Охотник {user_name} доставил тебе {order_data['chibi_name']}!_",
                         parse_mode='Markdown'
                     )
+                    self.user_message_ownership[sent_message.message_id] = creator_id
                     
                     # Уведомляем всех остальных принявших
                     accepted_users = self.order_accepted_by.get(order_id, [])
@@ -2146,12 +2295,17 @@ _Мои поздравления! Думаю, это было достаточн
                             if user_id in self.user_active_hunts:
                                 del self.user_active_hunts[user_id]
                             
+                            # Удаляем время начала охоты
+                            if user_id in self.hunt_start_times and order_id in self.hunt_start_times[user_id]:
+                                del self.hunt_start_times[user_id][order_id]
+                            
                             user_name = self.users.get(user_id, {}).get('first_name', 'Игрок')
-                            self.bot.send_message(
+                            sent_message = self.bot.send_message(
                                 user_id,
                                 f"*Хей, {user_name}!*\n_Заказ, который ты принял, был завершен! Соболезную_",
                                 parse_mode='Markdown'
                             )
+                            self.user_message_ownership[sent_message.message_id] = user_id
                     
                     # Удаляем заказ
                     self.cantina_orders[order_id]["status"] = "completed"
@@ -2165,8 +2319,13 @@ _Мои поздравления! Думаю, это было достаточн
                         if self.user_active_hunts[user_id] == order_id:
                             del self.user_active_hunts[user_id]
                     
+                    # Удаляем временные метки охоты
+                    for user_id in list(self.hunt_start_times.keys()):
+                        if order_id in self.hunt_start_times[user_id]:
+                            del self.hunt_start_times[user_id][order_id]
+                    
                 elif call.data == "cantina_cannot_complete":
-                    self.bot.answer_callback_query(call.id, "У тебя нет нужного чибика!")
+                    self.bot.answer_callback_query(call.id, "У тебя нет свежего чибика для этого заказа!")
                     
                 elif call.data == "chibi_click":
                     self.bot.answer_callback_query(call.id)
