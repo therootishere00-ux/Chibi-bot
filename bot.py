@@ -159,7 +159,7 @@ class ChibiBot:
         telegram_id_str = str(telegram_id)
         
         # Если у пользователя уже есть активное задание, возвращаем его
-        if telegram_id_str in self.user_tasks and self.user_tasks[telegram_id_str] is None:
+        if telegram_id_str in self.user_tasks and self.user_tasks[telegram_id_str] is not None:
             return self.user_tasks[telegram_id_str]
         
         # Создаем новое задание
@@ -470,7 +470,7 @@ _Джавы, может, и не отличаются умом, но зато т
                     )
                     self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, mart_text, parse_mode='Markdown')
+                    self.bot.reply_to(message, mart_text, reply_markup=markup, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии лавки: {e}")
@@ -536,6 +536,7 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                         self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     else:
                         self.bot.reply_to(message, chibi_text, parse_mode='Markdown')
+                        # В группах не отправляем фото, только текст
                     
                 logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
                     
@@ -573,7 +574,7 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                     )
                     self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, task_text, parse_mode='Markdown')
+                    self.bot.reply_to(message, task_text, reply_markup=markup, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка при генерации задания: {e}")
@@ -606,7 +607,7 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     )
                     self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, menu_text, parse_mode='Markdown')
+                    self.bot.reply_to(message, menu_text, reply_markup=markup, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии меню: {e}")
@@ -620,7 +621,7 @@ _Здесь ты найдешь все, что нужно, но не имеет 
         def gift_handler(message):
             # Запрещаем команду в группах
             if message.chat.type != 'private':
-                self.bot.reply_to(message, "🙅‍♂️ Не-не, дружок! Эта команда доступна только в *личке с ботом*", parse_mode='Markdown')
+                self.bot.reply_to(message, "🙅‍♂️ Не-не, дружок! Эта команда доступна только в *личке с ботом*_", parse_mode='Markdown')
                 return
                 
             try:
@@ -725,7 +726,7 @@ _Выбери, какого чибика подаришь_"""
         def cantina_handler(message):
             # Запрещаем команду в группах
             if message.chat.type != 'private':
-                self.bot.reply_to(message, "🙅‍♂️ Не-не, дружок! Эта команда доступна только в *личке с ботом*", parse_mode='Markdown')
+                self.bot.reply_to(message, "🙅‍♂️ Не-не, дружок! Эта команда доступна только в *личке с ботом*_", parse_mode='Markdown')
                 return
                 
             try:
@@ -802,10 +803,26 @@ _Отличное место! Сборище наемников. Здесь мо
                         recommended_price = random.randint(32, 45)
                         
                         if reward < 25:
-                            self.bot.reply_to(message, "❌ Слишком мало! Минимум — 25")
+                            if message.chat.type == 'private':
+                                sent_message = self.bot.send_message(
+                                    message.chat.id,
+                                    "❌ Слишком мало! Минимум — 25",
+                                    parse_mode='Markdown'
+                                )
+                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                            else:
+                                self.bot.reply_to(message, "❌ Слишком мало! Минимум — 25", parse_mode='Markdown')
                             return
                         elif reward > 440:
-                            self.bot.reply_to(message, "❌ Слишком много! Максимум — 440")
+                            if message.chat.type == 'private':
+                                sent_message = self.bot.send_message(
+                                    message.chat.id,
+                                    "❌ Слишком много! Максимум — 440",
+                                    parse_mode='Markdown'
+                                )
+                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                            else:
+                                self.bot.reply_to(message, "❌ Слишком много! Максимум — 440", parse_mode='Markdown')
                             return
                         
                         # Сохраняем цену
@@ -815,7 +832,7 @@ _Отличное место! Сборище наемников. Здесь мо
                         # Очищаем состояние
                         self.user_states[telegram_id_str] = None
                         
-                        # Редактируем сообщение создания заказа
+                        # Возвращаем к созданию заказа
                         create_text = """🕍 *Создаем заказ*
 _Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию_"""
                         
@@ -858,7 +875,15 @@ _Укажи, какого чибика охотники будут искать,
                         self.bot.delete_message(message.chat.id, message.message_id)
                         
                     except ValueError:
-                        self.bot.reply_to(message, "❌ Пожалуйста, введи число!")
+                        if message.chat.type == 'private':
+                            sent_message = self.bot.send_message(
+                                message.chat.id,
+                                "❌ Пожалуйста, введи число!",
+                                parse_mode='Markdown'
+                            )
+                            self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                        else:
+                            self.bot.reply_to(message, "❌ Пожалуйста, введи число!", parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка в текстовом обработчике: {e}")
@@ -1606,7 +1631,7 @@ _•••••••••••••••••_
                     # Устанавливаем состояние ожидания ввода цены
                     self.user_states[telegram_id_str] = "waiting_for_reward"
                     
-                    # Редактируем сообщение вместо отправки нового
+                    # Редактируем текущее сообщение вместо отправки нового
                     self.bot.edit_message_text(
                         reward_text,
                         call.message.chat.id,
@@ -1689,6 +1714,14 @@ _Ты платишь:_ *{order_data['reward']}*"""
                     
                     # Очищаем данные создания заказа
                     del self.user_order_creation[telegram_id_str]
+                    
+                    # Отправляем сообщение кантины заново
+                    sent_message = self.bot.send_message(
+                        call.message.chat.id,
+                        "✅ Заказ создан!",
+                        parse_mode='Markdown'
+                    )
+                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
                     
                     # Показываем обновленную кантину
                     cantina_text = """*🕍 Кантина*
