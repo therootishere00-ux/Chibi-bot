@@ -32,6 +32,7 @@ class ChibiBot:
         self.hunt_start_times = {}     # Храним время начала охоты: {user_id: {order_id: datetime}}
         self.next_order_id = 1
         self.user_message_ownership = {} # Храним владельцев сообщений: {message_id: user_id}
+        self.admin_usernames = ['temkazavr', 'ribapibaa']  # Администраторы
         
     def generate_unique_user_id(self):
         attempts = 0
@@ -356,6 +357,10 @@ _{task_data['phrase']}_
 
     def check_message_ownership(self, call):
         """Проверяет, принадлежит ли сообщение пользователю"""
+        # В личных сообщениях разрешаем все
+        if call.message.chat.type == 'private':
+            return True
+            
         telegram_id_str = str(call.from_user.id)
         message_id = call.message.message_id
         
@@ -364,6 +369,35 @@ _{task_data['phrase']}_
                 self.bot.answer_callback_query(call.id, "Не твое!")
                 return False
         return True
+
+    def find_user_by_identifier(self, identifier):
+        """Находит пользователя по user_id, username или telegram_id"""
+        # Убираем @ если есть
+        if identifier.startswith('@'):
+            identifier = identifier[1:]
+            
+        # Поиск по user_id (сгенерированному ID)
+        for telegram_id_str, user_data in self.users.items():
+            if user_data.get('user_id') == identifier:
+                return user_data, telegram_id_str
+                
+        # Поиск по username
+        for telegram_id_str, user_data in self.users.items():
+            if user_data.get('username') == identifier:
+                return user_data, telegram_id_str
+                
+        # Поиск по telegram_id (число или строка)
+        if identifier in self.users:
+            return self.users[identifier], identifier
+            
+        # Если identifier - число, пробуем найти как telegram_id
+        try:
+            if str(int(identifier)) in self.users:
+                return self.users[str(int(identifier))], str(int(identifier))
+        except ValueError:
+            pass
+            
+        return None, None
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -535,8 +569,14 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                         )
                         self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     else:
-                        self.bot.reply_to(message, chibi_text, parse_mode='Markdown')
-                        # В группах не отправляем фото, только текст
+                        # В группах отправляем без реплая
+                        sent_message = self.bot.send_photo(
+                            message.chat.id,
+                            photo,
+                            caption=chibi_text,
+                            parse_mode='Markdown'
+                        )
+                        self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
                     
                 logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
                     
@@ -797,7 +837,123 @@ _Отличное место! Сборище наемников. Здесь мо
             try:
                 telegram_id_str = str(message.from_user.id)
                 
-                if self.user_states.get(telegram_id_str) == "waiting_for_reward":
+                # Проверяем административные команды
+                if message.from_user.username in self.admin_usernames:
+                    text = message.text.strip()
+                    
+                    # Обработка выдачи паков
+                    if text.startswith('reclaim_') and '_packs.value=' in text and '_status=true' in text:
+                        try:
+                            # Парсим команду
+                            parts = text.split('_')
+                            user_identifier = parts[1]
+                            value_part = text.split('packs.value=')[1].split('_status=true')[0]
+                            amount = int(value_part)
+                            
+                            # Находим пользователя
+                            user_data, target_telegram_id = self.find_user_by_identifier(user_identifier)
+                            if not user_data:
+                                if message.chat.type == 'private':
+                                    sent_message = self.bot.send_message(message.chat.id, "❌ Пользователь не найден!")
+                                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                                else:
+                                    self.bot.reply_to(message, "❌ Пользователь не найден!")
+                                return
+                            
+                            # Выдаем паки
+                            if target_telegram_id not in self.user_items:
+                                self.user_items[target_telegram_id] = {}
+                            if "🧧 Чиби-пак" not in self.user_items[target_telegram_id]:
+                                self.user_items[target_telegram_id]["🧧 Чиби-пак"] = 0
+                            self.user_items[target_telegram_id]["🧧 Чиби-пак"] += amount
+                            
+                            # Отправляем стикер
+                            sticker_id = "CAACAgIAAxkBAAE9Ox5pBRLv2Hxcf4ocN9T7WMDxyvUutQADSwAC8d0RSrm2zs5__WV5NgQ"
+                            self.bot.send_sticker(message.chat.id, sticker_id)
+                            
+                            # Отправляем сообщение
+                            response_text = f"*{amount} 🧧 Чиби-паков выдано игроку {user_data['first_name']}!*"
+                            if message.chat.type == 'private':
+                                sent_message = self.bot.send_message(message.chat.id, response_text, parse_mode='Markdown')
+                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                            else:
+                                self.bot.reply_to(message, response_text, parse_mode='Markdown')
+                                
+                        except Exception as e:
+                            logger.error(f"Ошибка в команде выдачи паков: {e}")
+                            if message.chat.type == 'private':
+                                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка в формате команды!")
+                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                            else:
+                                self.bot.reply_to(message, "❌ Ошибка в формате команды!")
+                    
+                    # Обработка выдачи чибика
+                    elif text.startswith('reclaim_') and '_chibi_status=true' in text:
+                        try:
+                            # Парсим команду
+                            parts = text.split('_')
+                            user_identifier = parts[1]
+                            
+                            # Находим пользователя
+                            user_data, target_telegram_id = self.find_user_by_identifier(user_identifier)
+                            if not user_data:
+                                if message.chat.type == 'private':
+                                    sent_message = self.bot.send_message(message.chat.id, "❌ Пользователь не найден!")
+                                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                                else:
+                                    self.bot.reply_to(message, "❌ Пользователь не найден!")
+                                return
+                            
+                            # Сохраняем состояние для выдачи чибика
+                            self.user_states[telegram_id_str] = {
+                                "action": "admin_give_chibi",
+                                "target_telegram_id": target_telegram_id,
+                                "target_name": user_data['first_name']
+                            }
+                            
+                            # Показываем выбор чибиков
+                            chibis, current_page, total_pages = self.get_all_chibis_paginated(1)
+                            
+                            select_text = """*Выбери чибика для выдачи*
+_Давай-давай, выбирай и не томи_"""
+                            
+                            markup = types.InlineKeyboardMarkup()
+                            
+                            for chibi_name in chibis:
+                                markup.add(types.InlineKeyboardButton(chibi_name, callback_data=f"admin_give_chibi_{chibi_name}"))
+                            
+                            nav_buttons = []
+                            if total_pages > 1:
+                                nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"admin_chibis_page_{((current_page-2) % total_pages) + 1}"))
+                            
+                            nav_buttons.append(types.InlineKeyboardButton("Отменить", callback_data="admin_give_chibi_cancel"))
+                            
+                            if total_pages > 1:
+                                nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"admin_chibis_page_{(current_page % total_pages) + 1}"))
+                            
+                            markup.row(*nav_buttons)
+                            
+                            if message.chat.type == 'private':
+                                sent_message = self.bot.send_message(
+                                    message.chat.id,
+                                    select_text,
+                                    reply_markup=markup,
+                                    parse_mode='Markdown'
+                                )
+                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                            else:
+                                self.bot.reply_to(message, select_text, reply_markup=markup, parse_mode='Markdown')
+                                
+                        except Exception as e:
+                            logger.error(f"Ошибка в команде выдачи чибика: {e}")
+                            if message.chat.type == 'private':
+                                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка в формате команды!")
+                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                            else:
+                                self.bot.reply_to(message, "❌ Ошибка в формате команды!")
+                
+                # Обработка обычных состояний
+                elif self.user_states.get(telegram_id_str) == "waiting_for_reward":
                     try:
                         reward = int(message.text)
                         recommended_price = random.randint(32, 45)
@@ -892,7 +1048,7 @@ _Укажи, какого чибика охотники будут искать,
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
             try:
-                # Проверяем владельца сообщения
+                # Проверяем владельца сообщения (только в группах)
                 if not self.check_message_ownership(call):
                     return
 
@@ -2386,6 +2542,93 @@ _••••••••••••••••••_
                     
                 elif call.data == "cantina_cannot_complete":
                     self.bot.answer_callback_query(call.id, "У тебя нет свежего чибика для этого заказа!")
+                    
+                # Административные команды выдачи чибиков
+                elif call.data.startswith("admin_give_chibi_"):
+                    chibi_name = call.data.replace("admin_give_chibi_", "")
+                    telegram_id_str = str(call.from_user.id)
+                    
+                    # Проверяем, что пользователь администратор и в состоянии выдачи
+                    if (telegram_id_str not in self.user_states or 
+                        self.user_states[telegram_id_str].get("action") != "admin_give_chibi"):
+                        self.bot.answer_callback_query(call.id, "Сессия устарела!")
+                        return
+                    
+                    target_telegram_id = self.user_states[telegram_id_str]["target_telegram_id"]
+                    target_name = self.user_states[telegram_id_str]["target_name"]
+                    
+                    # Добавляем чибика целевому пользователю
+                    self.add_chibi_to_user(target_telegram_id, chibi_name)
+                    
+                    # Удаляем сообщение с выбором
+                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
+                    
+                    # Отправляем стикер
+                    sticker_id = "CAACAgIAAxkBAAE9Ox5pBRLv2Hxcf4ocN9T7WMDxyvUutQADSwAC8d0RSrm2zs5__WV5NgQ"
+                    self.bot.send_sticker(call.message.chat.id, sticker_id)
+                    
+                    # Сообщение о выдаче
+                    response_text = f"*🐲 Чибик {chibi_name} выдан игроку {target_name}!*"
+                    sent_message = self.bot.send_message(
+                        call.message.chat.id,
+                        response_text,
+                        parse_mode='Markdown'
+                    )
+                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                    
+                    # Очищаем состояние
+                    del self.user_states[telegram_id_str]
+                    
+                elif call.data.startswith("admin_chibis_page_"):
+                    page = int(call.data.split("_")[3])
+                    telegram_id_str = str(call.from_user.id)
+                    
+                    # Проверяем, что пользователь администратор и в состоянии выдачи
+                    if (telegram_id_str not in self.user_states or 
+                        self.user_states[telegram_id_str].get("action") != "admin_give_chibi"):
+                        self.bot.answer_callback_query(call.id, "Сессия устарела!")
+                        return
+                    
+                    chibis, current_page, total_pages = self.get_all_chibis_paginated(page)
+                    
+                    select_text = """*Выбери чибика для выдачи*
+_Давай-давай, выбирай и не томи_"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    
+                    for chibi_name in chibis:
+                        markup.add(types.InlineKeyboardButton(chibi_name, callback_data=f"admin_give_chibi_{chibi_name}"))
+                    
+                    nav_buttons = []
+                    if total_pages > 1:
+                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"admin_chibis_page_{((current_page-2) % total_pages) + 1}"))
+                    
+                    nav_buttons.append(types.InlineKeyboardButton("Отменить", callback_data="admin_give_chibi_cancel"))
+                    
+                    if total_pages > 1:
+                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"admin_chibis_page_{(current_page % total_pages) + 1}"))
+                    
+                    markup.row(*nav_buttons)
+                    
+                    self.bot.edit_message_text(
+                        select_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                elif call.data == "admin_give_chibi_cancel":
+                    telegram_id_str = str(call.from_user.id)
+                    if (telegram_id_str in self.user_states and 
+                        self.user_states[telegram_id_str].get("action") == "admin_give_chibi"):
+                        del self.user_states[telegram_id_str]
+                    
+                    self.bot.edit_message_text(
+                        "❌ Выдача чибика отменена",
+                        call.message.chat.id,
+                        call.message.message_id
+                    )
                     
                 elif call.data == "chibi_click":
                     self.bot.answer_callback_query(call.id)
