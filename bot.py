@@ -17,24 +17,24 @@ logger = logging.getLogger(__name__)
 class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
-        self.users = {}  # Храним в памяти
+        self.users = {}
         self.used_ids = set()
-        self.user_chibis = {}  # Храним чибиков пользователей: {user_id: [chibi_name1, chibi_name2, ...]}
-        self.user_items = {}   # Храним предметы пользователей: {user_id: {"🧧 Чиби-пак": 1}}
-        self.user_tasks = {}   # Храним текущие задания пользователей: {user_id: {"chibi": "имя", "reward": 35, "emoji": "🐊", "name": "Грирт"}}
-        self.user_coins = {}   # Храним коины пользователей: {user_id: 0}
-        self.user_levels = {}  # Храним уровни пользователей: {user_id: 1}
-        self.user_exp = {}     # Храним опыт пользователей: {user_id: 0}
-        self.gift_selections = {}  # Храним выбранных чибиков для подарка: {user_id: {"target_user_id": "123", "chibi_name": "имя"}}
-        self.cantina_orders = {}   # Храним заказы кантины
-        self.user_order_creation = {}  # Храним данные создания заказа
-        self.user_active_hunts = {}    # Храним активные охоты пользователей: {user_id: order_id}
-        self.order_accepted_by = {}    # Храним кто принял заказы: {order_id: [user_id1, user_id2]}
-        self.user_states = {}          # Храним состояния пользователей для ввода текста
-        self.user_chibi_timestamps = {} # Храним когда получены чибики: {user_id: {chibi_name: datetime}}
-        self.hunt_start_times = {}     # Храним время начала охоты: {user_id: {order_id: datetime}}
+        self.user_chibis = {}
+        self.user_items = {}
+        self.user_tasks = {}
+        self.user_coins = {}
+        self.user_levels = {}
+        self.user_exp = {}
+        self.gift_selections = {}
+        self.cantina_orders = {}
+        self.user_order_creation = {}
+        self.user_active_hunts = {}
+        self.order_accepted_by = {}
+        self.user_states = {}
+        self.user_chibi_timestamps = {}
+        self.hunt_start_times = {}
         self.next_order_id = 1
-        self.message_owners = {}       # Храним владельцев сообщений: {(chat_id, message_id): user_id}
+        self.message_owners = {}
         
     def generate_unique_user_id(self):
         attempts = 0
@@ -53,11 +53,9 @@ class ChibiBot:
         telegram_id_str = str(telegram_id)
         
         if telegram_id_str in self.users:
-            # Существующий пользователь
             self.users[telegram_id_str]['last_active'] = datetime.now()
             return self.users[telegram_id_str], False
         else:
-            # Новый пользователь
             user_id = self.generate_unique_user_id()
             user_data = {
                 'user_id': user_id,
@@ -67,22 +65,33 @@ class ChibiBot:
                 'last_active': datetime.now()
             }
             self.users[telegram_id_str] = user_data
-            # Инициализируем коллекцию чибиков для нового пользователя
             self.user_chibis[telegram_id_str] = []
-            # Инициализируем предметы и выдаем бесплатный Чиби-пак
             self.user_items[telegram_id_str] = {"🧧 Чиби-пак": 1}
-            # Инициализируем коины
             self.user_coins[telegram_id_str] = 0
-            # Инициализируем уровни и опыт
             self.user_levels[telegram_id_str] = 1
             self.user_exp[telegram_id_str] = 0
-            # Инициализируем временные метки чибиков
             self.user_chibi_timestamps[telegram_id_str] = {}
             logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
 
+    def check_user_started(self, user_id):
+        return str(user_id) in self.users
+
+    def send_start_suggestion(self, chat_id, message_id=None):
+        text = "⭐️ *Советую сначала запустить бота*"
+        markup = types.InlineKeyboardMarkup()
+        btn_start = types.InlineKeyboardButton("Запуск", url=f"https://t.me/{self.bot.get_me().username}?start=start")
+        markup.add(btn_start)
+        
+        if message_id:
+            try:
+                self.bot.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode='Markdown')
+            except:
+                self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+        else:
+            self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+
     def get_required_exp(self, level):
-        """Вычисляет требуемый опыт для перехода на следующий уровень"""
         if level < 7:
             return level * 100
         elif level < 15:
@@ -93,7 +102,6 @@ class ChibiBot:
             return 4950 + (level - 29) * 300
 
     def add_exp(self, telegram_id, exp_amount):
-        """Добавляет опыт пользователю и проверяет повышение уровня"""
         telegram_id_str = str(telegram_id)
         
         if telegram_id_str not in self.user_levels:
@@ -104,7 +112,6 @@ class ChibiBot:
         current_level = self.user_levels[telegram_id_str]
         self.user_exp[telegram_id_str] += exp_amount
         
-        # Проверяем повышение уровня
         required_exp = self.get_required_exp(current_level)
         level_ups = 0
         
@@ -117,34 +124,59 @@ class ChibiBot:
         
         return level_ups, current_level
 
+    def get_level_progress(self, telegram_id):
+        telegram_id_str = str(telegram_id)
+        level = self.user_levels.get(telegram_id_str, 1)
+        current_exp = self.user_exp.get(telegram_id_str, 0)
+        required_exp = self.get_required_exp(level)
+        percentage = int((current_exp / required_exp) * 100) if required_exp > 0 else 0
+        return level, current_exp, required_exp, percentage
+
+    def get_unlocked_feature(self, level):
+        if level == 3:
+            return "Охота за чибиками"
+        elif level == 7:
+            return "Заказы в кантине"
+        return None
+
     def send_level_up_message(self, telegram_id, old_level, new_level):
-        """Отправляет сообщение о повышении уровня с задержкой"""
-        time.sleep(1)  # Задержка 1 секунда
+        time.sleep(1)
         
         telegram_id_str = str(telegram_id)
         user_name = self.users.get(telegram_id_str, {}).get('first_name', 'путешественник')
         
-        # Начисляем чиби-пак
         if telegram_id_str not in self.user_items:
             self.user_items[telegram_id_str] = {}
         if "🧧 Чиби-пак" not in self.user_items[telegram_id_str]:
             self.user_items[telegram_id_str]["🧧 Чиби-пак"] = 0
         self.user_items[telegram_id_str]["🧧 Чиби-пак"] += 1
         
-        # Отправляем стикер
+        unlocked_feature = self.get_unlocked_feature(new_level)
+        
         try:
             sticker_id = "CAACAgIAAxkBAAE9VHtpCGLDUXiyHkIeGqv7M2eqFbN3eQAC1kgAAuSPEUq4MV_FOLGn0zYE"
             self.bot.send_sticker(telegram_id, sticker_id)
         except:
             pass
         
-        # Отправляем сообщение
-        level_text = f"""*Эй, {user_name}!*
+        if unlocked_feature:
+            level_text = f"""*Эй, {user_name}!*
 _Ты только что апнул новый уровень! Поздравляю!_
-`•••••••••••••••••••`
+_•••••••••••••••••••_
 *Уровень {old_level} —> Уровень {new_level}*
-`•••••••••••••••••••`
-И чтобы ты не расслаблялся, держи небольшой подгон:
+_•••••••••••••••••••_
+Теперь доступно: 
+  - *{unlocked_feature}*
+_•••••••••••••••••••_
+И чтобы ты _не расслаблялся_, держи небольшой подгон:
++ *🧧 1* Чиби-пак"""
+        else:
+            level_text = f"""*Эй, {user_name}!*
+_Ты только что апнул новый уровень! Поздравляю!_
+•••••••••••••••••••
+*Уровень {old_level} —> Уровень {new_level}*
+•••••••••••••••••••
+И чтобы ты _не расслаблялся_, держи небольшой подгон:
 + *🧧 1* Чиби-пак"""
         
         try:
@@ -154,7 +186,6 @@ _Ты только что апнул новый уровень! Поздравл
             pass
 
     def format_exp(self, exp):
-        """Форматирует опыт для отображения"""
         if exp < 1000:
             return str(exp)
         elif exp < 1000000:
@@ -163,7 +194,6 @@ _Ты только что апнул новый уровень! Поздравл
             return f"{exp/1000000:.1f}M".replace('.0M', 'M')
 
     def add_chibi_to_user(self, telegram_id, chibi_name):
-        """Добавляет чибика пользователю с временной меткой"""
         telegram_id_str = str(telegram_id)
         if telegram_id_str not in self.user_chibis:
             self.user_chibis[telegram_id_str] = []
@@ -171,11 +201,9 @@ _Ты только что апнул новый уровень! Поздравл
             self.user_chibi_timestamps[telegram_id_str] = {}
         
         self.user_chibis[telegram_id_str].append(chibi_name)
-        # Сохраняем время получения чибика
         self.user_chibi_timestamps[telegram_id_str][chibi_name] = datetime.now()
 
     def get_fresh_chibi_count(self, telegram_id, chibi_name, hunt_start_time):
-        """Получает количество свежих чибиков (полученных после начала охоты)"""
         telegram_id_str = str(telegram_id)
         if (telegram_id_str not in self.user_chibis or 
             telegram_id_str not in self.user_chibi_timestamps):
@@ -190,39 +218,31 @@ _Ты только что апнул новый уровень! Поздравл
         return count
 
     def get_random_chibi(self, from_pack=False):
-        """Получает случайный чиби из папки common или secret"""
-        if from_pack and random.random() <= 0.05:  # 5% шанс на секретного чибика из пака
+        if from_pack and random.random() <= 0.05:
             chibi_folder = "chibis/secret"
         else:
             chibi_folder = "chibis/common"
         
-        # Проверяем существование папки
         if not os.path.exists(chibi_folder):
             logger.error(f"Папка {chibi_folder} не найдена!")
             return None, None, "Common"
         
-        # Получаем список PNG файлов
         chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
         
         if not chibi_files:
             logger.error(f"В папке {chibi_folder} нет PNG файлов!")
             return None, None, "Common"
         
-        # Выбираем случайный файл
         random_file = random.choice(chibi_files)
         file_path = os.path.join(chibi_folder, random_file)
+        file_name = os.path.splitext(random_file)[0]
+        formatted_name = file_name.replace('_', ' ')
         
-        # Форматируем название файла
-        file_name = os.path.splitext(random_file)[0]  # Убираем расширение
-        formatted_name = file_name.replace('_', ' ')  # Заменяем _ на пробелы
-        
-        # Определяем редкость
         rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
         
         return file_path, formatted_name, rarity
 
     def get_all_common_chibis(self):
-        """Получает список всех common чибиков"""
         chibi_folder = "chibis/common"
         
         if not os.path.exists(chibi_folder):
@@ -232,51 +252,37 @@ _Ты только что апнул новый уровень! Поздравл
         chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
         chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
         
-        return sorted(chibi_names)  # Сортируем по алфавиту
+        return sorted(chibi_names)
 
     def get_chibi_count(self, telegram_id, chibi_name):
-        """Получает количество конкретного чибика у пользователя"""
         telegram_id_str = str(telegram_id)
         if telegram_id_str not in self.user_chibis:
             return 0
         return self.user_chibis[telegram_id_str].count(chibi_name)
 
     def generate_task(self, telegram_id):
-        """Генерирует случайное задание для пользователя"""
         telegram_id_str = str(telegram_id)
         
-        # Если у пользователя уже есть активное задание, возвращаем его
         if telegram_id_str in self.user_tasks and self.user_tasks[telegram_id_str] is not None:
             return self.user_tasks[telegram_id_str]
         
-        # Создаем новое задание
-        # Случайные эмодзи
         emojis = ['🐊', '🐸', '🤖', '⛄️', '🐲', '👽']
-        
-        # Случайные имена
         names = ['Грирт', 'Таррек', 'Грит', 'Тарр', 'Крилл', 'Гето', 'Дин', 'Боксо', 'Мерин', 'Хрило', 'Гомадо', 'Грож']
-        
-        # Случайные реплики
         phrases = [
             "Эй, ты! Принеси-ка мне {chibi}, я щедро тебя награжу!",
             "Приветствую… Очень хочу заполучить {chibi}, если принесешь мне его, в долгу не останусь",
             "Бурабура, лакуш'н, принеси мне {chibi}, я готов платить"
         ]
         
-        # Получаем случайный чибик для задания
         _, chibi_name, _ = self.get_random_chibi()
         if chibi_name is None:
-            chibi_name = "редкого чибика"  # Запасной вариант
+            chibi_name = "редкого чибика"
         
-        # Случайная награда
         reward = random.randint(32, 49)
-        
-        # Выбираем случайные элементы
         emoji = random.choice(emojis)
         name = random.choice(names)
         phrase = random.choice(phrases).format(chibi=chibi_name)
         
-        # Сохраняем задание для пользователя
         task_data = {
             "chibi": chibi_name,
             "reward": reward,
@@ -289,10 +295,7 @@ _Ты только что апнул новый уровень! Поздравл
         return task_data
 
     def get_task_text(self, task_data, telegram_id):
-        """Формирует текст задания с проверкой выполнения"""
         telegram_id_str = str(telegram_id)
-        
-        # Проверяем, есть ли у пользователя нужный чибик
         has_chibi = self.get_chibi_count(telegram_id, task_data["chibi"]) > 0
         button_text = "✅ Сдать задание (1/1)" if has_chibi else "Сдать задание (0/1)"
         
@@ -304,25 +307,20 @@ _{task_data['phrase']}_
         return task_text, button_text, has_chibi
 
     def get_user_chibis_paginated(self, telegram_id, page=1, per_page=8):
-        """Получает чибиков пользователя с пагинацией"""
         telegram_id_str = str(telegram_id)
         if telegram_id_str not in self.user_chibis:
             self.user_chibis[telegram_id_str] = []
         
         chibis = self.user_chibis[telegram_id_str]
-        
-        # Подсчитываем количество каждого чибика
         chibi_counts = {}
         for chibi in chibis:
             chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
         
-        # Сортируем по количеству (от большего к меньшему), затем по алфавиту
         sorted_chibis = sorted(
             [(name, count) for name, count in chibi_counts.items()],
             key=lambda x: (-x[1], x[0])
         )
         
-        # Пагинация
         total_pages = max(1, (len(sorted_chibis) + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
         
@@ -333,23 +331,18 @@ _{task_data['phrase']}_
         return page_chibis, page, total_pages
 
     def get_user_items_paginated(self, telegram_id, page=1, per_page=8):
-        """Получает предметы пользователя с пагинацией"""
         telegram_id_str = str(telegram_id)
         if telegram_id_str not in self.user_items:
             self.user_items[telegram_id_str] = {}
         
         items = self.user_items[telegram_id_str]
-        
-        # Фильтруем предметы с количеством > 0
         active_items = {name: count for name, count in items.items() if count > 0}
         
-        # Сортируем по количеству (от большего к меньшему), затем по алфавиту
         sorted_items = sorted(
             [(name, count) for name, count in active_items.items()],
             key=lambda x: (-x[1], x[0])
         )
         
-        # Пагинация
         total_pages = max(1, (len(sorted_items) + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
         
@@ -360,25 +353,20 @@ _{task_data['phrase']}_
         return page_items, page, total_pages
 
     def get_user_chibis_for_gift(self, telegram_id, page=1, per_page=6):
-        """Получает чибиков пользователя для выбора подарка"""
         telegram_id_str = str(telegram_id)
         if telegram_id_str not in self.user_chibis:
             self.user_chibis[telegram_id_str] = []
         
         chibis = self.user_chibis[telegram_id_str]
-        
-        # Подсчитываем количество каждого чибика
         chibi_counts = {}
         for chibi in chibis:
             chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
         
-        # Сортируем по количеству (от большего к меньшему), затем по алфавиту
         sorted_chibis = sorted(
             [(name, count) for name, count in chibi_counts.items()],
             key=lambda x: (-x[1], x[0])
         )
         
-        # Пагинация
         total_pages = max(1, (len(sorted_chibis) + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
         
@@ -389,10 +377,8 @@ _{task_data['phrase']}_
         return page_chibis, page, total_pages
 
     def get_all_chibis_paginated(self, page=1, per_page=6):
-        """Получает все common чибики с пагинацией"""
         all_chibis = self.get_all_common_chibis()
         
-        # Пагинация
         total_pages = max(1, (len(all_chibis) + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
         
@@ -403,7 +389,6 @@ _{task_data['phrase']}_
         return page_chibis, page, total_pages
 
     def get_user_active_order(self, telegram_id):
-        """Получает активный заказ пользователя"""
         telegram_id_str = str(telegram_id)
         for order_id, order_data in self.cantina_orders.items():
             if order_data["creator_id"] == telegram_id_str and order_data["status"] == "active":
@@ -411,21 +396,17 @@ _{task_data['phrase']}_
         return None, None
 
     def get_other_orders_paginated(self, telegram_id, page=1, per_page=7):
-        """Получает заказы других пользователей с пагинацией"""
         telegram_id_str = str(telegram_id)
         other_orders = []
         
         for order_id, order_data in self.cantina_orders.items():
             if (order_data["creator_id"] != telegram_id_str and 
                 order_data["status"] == "active"):
-                # Проверяем, принял ли пользователь этот заказ
                 is_accepted = telegram_id_str in self.order_accepted_by.get(order_id, [])
                 other_orders.append((order_id, order_data, is_accepted))
         
-        # Сортируем по награде (от высокой к низкой)
         other_orders.sort(key=lambda x: x[1]["reward"], reverse=True)
         
-        # Пагинация
         total_pages = max(1, (len(other_orders) + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
         
@@ -436,13 +417,11 @@ _{task_data['phrase']}_
         return page_orders, page, total_pages
 
     def format_date(self, date):
-        """Форматирует дату в формат '25авг 2025'"""
         months = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 
                  'июл', 'авг', 'сен', 'окт', 'ноя', 'дек']
         return f"{date.day}{months[date.month-1]} {date.year}"
 
     def check_message_ownership(self, call):
-        """Проверяет, принадлежит ли сообщение пользователю (только в группах)"""
         if call.message.chat.type == 'private':
             return True
             
@@ -451,15 +430,13 @@ _{task_data['phrase']}_
         
         if message_key in self.message_owners:
             if self.message_owners[message_key] != telegram_id_str:
-                self.bot.answer_callback_query(call.id, "🙈 *Не трогай чужое!*", parse_mode='Markdown')
+                self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
                 return False
-        # Если сообщение не зарегистрировано, разрешаем нажатие (на всякий случай)
         return True
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
-            # Игнорируем команду /start в группах
             if message.chat.type != 'private':
                 return
                 
@@ -472,7 +449,6 @@ _{task_data['phrase']}_
                 
                 user_name = message.from_user.first_name or "путешественник"
                 
-                # Отправляем разные стикеры для нового и существующего пользователя
                 if is_new_user:
                     sticker_id = "CAACAgIAAxkBAAE9JsNpAzQZv6b4b-KZ3ftL2Sld0kUjDQAC400AAkuWEEosjitzZk8fzDYE"
                 else:
@@ -489,7 +465,6 @@ _{task_data['phrase']}_
                     )
                     markup.add(btn_channel)
                     sent_message = self.bot.send_message(message.chat.id, welcome_text, reply_markup=markup, parse_mode='Markdown')
-                    # Сохраняем владельца сообщения
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
                     sent_message = self.bot.send_message(message.chat.id, BOT_TEXTS['already_started'], parse_mode='Markdown')
@@ -503,6 +478,10 @@ _{task_data['phrase']}_
         @self.bot.message_handler(commands=['myid'])
         def myid_handler(message):
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
                 user_data, _ = self.get_or_create_user(message.from_user.id)
                 user_id = user_data['user_id']
                 
@@ -524,6 +503,10 @@ _{task_data['phrase']}_
         @self.bot.message_handler(commands=['balance'])
         def balance_handler(message):
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
                 telegram_id_str = str(message.from_user.id)
                 coins = self.user_coins.get(telegram_id_str, 0)
                 
@@ -545,13 +528,13 @@ _{task_data['phrase']}_
         @self.bot.message_handler(commands=['level'])
         def level_handler(message):
             try:
-                telegram_id_str = str(message.from_user.id)
-                level = self.user_levels.get(telegram_id_str, 1)
-                current_exp = self.user_exp.get(telegram_id_str, 0)
-                required_exp = self.get_required_exp(level)
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
+                level, current_exp, required_exp, percentage = self.get_level_progress(message.from_user.id)
                 
-                level_text = f"""🎯 *Твой уровень: {level}*
-`{self.format_exp(current_exp)}/{self.format_exp(required_exp)}`"""
+                level_text = f"""💫 *Твой уровень* — *{level}* ({percentage}%)"""
                 
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(message.chat.id, level_text, parse_mode='Markdown')
@@ -570,6 +553,10 @@ _{task_data['phrase']}_
         @self.bot.message_handler(commands=['mart'])
         def mart_handler(message):
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
                 mart_text = """🎏 *Лавка джавы*
 _Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!_"""
                 
@@ -600,6 +587,10 @@ _Джавы, может, и не отличаются умом, но зато т
         @self.bot.message_handler(commands=['chibi'])
         def chibi_handler(message):
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
                 telegram_id_str = str(message.from_user.id)
                 file_path, chibi_name, rarity = self.get_random_chibi(from_pack=False)
                 
@@ -611,7 +602,6 @@ _Джавы, может, и не отличаются умом, но зато т
                         self.bot.reply_to(message, "🌀 *Чибики сейчас отдыхают!* Загляни позже", parse_mode='Markdown')
                     return
                 
-                # Проверяем, есть ли активная охота у пользователя
                 active_hunt_order_id = self.user_active_hunts.get(telegram_id_str)
                 hunt_chibi_needed = None
                 hunt_start_time = None
@@ -619,17 +609,11 @@ _Джавы, может, и не отличаются умом, но зато т
                     hunt_chibi_needed = self.cantina_orders[active_hunt_order_id]["chibi_name"]
                     hunt_start_time = self.hunt_start_times.get(telegram_id_str, {}).get(active_hunt_order_id)
                 
-                # Добавляем чибика в коллекцию пользователя
                 self.add_chibi_to_user(message.from_user.id, chibi_name)
-                
-                # Получаем количество этого чибика у пользователя
                 chibi_count = self.get_chibi_count(message.from_user.id, chibi_name)
-                
-                # Начисляем опыт за чибика
                 exp_gained = random.randint(12, 19)
                 level_ups, new_level = self.add_exp(message.from_user.id, exp_gained)
                 
-                # Формируем текст сообщения
                 rarity_emoji = "🔷" if rarity == "Common" else "💠"
                 
                 if hunt_chibi_needed and chibi_name == hunt_chibi_needed:
@@ -649,7 +633,6 @@ _Надеюсь, он тебе понравился! Приходи еще че�
 `•••••••••••••••••••`
 + ⭐️ *{exp_gained}* опыта"""
                 
-                # Отправляем картинку с текстом
                 with open(file_path, 'rb') as photo:
                     if message.chat.type == 'private':
                         sent_message = self.bot.send_photo(
@@ -660,7 +643,6 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                         )
                         self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     else:
-                        # В группах отправляем фото без реплая
                         sent_message = self.bot.send_photo(
                             message.chat.id,
                             photo,
@@ -671,7 +653,6 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                     
                 logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
                 
-                # Отправляем сообщение о повышении уровня с задержкой
                 if level_ups > 0:
                     threading.Thread(target=self.send_level_up_message, 
                                    args=(message.from_user.id, new_level - level_ups, new_level)).start()
@@ -687,6 +668,10 @@ _Надеюсь, он тебе понравился! Приходи еще че�
         @self.bot.message_handler(commands=['task'])
         def task_handler(message):
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
                 task_data = self.generate_task(message.from_user.id)
                 task_text, button_text, has_chibi = self.get_task_text(task_data, message.from_user.id)
                 
@@ -724,6 +709,10 @@ _Надеюсь, он тебе понравился! Приходи еще че�
         @self.bot.message_handler(commands=['menu'])
         def menu_handler(message):
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
                 menu_text = """*✨ Меню* 
 _Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались_"""
                 
@@ -757,12 +746,15 @@ _Здесь ты найдешь все, что нужно, но не имеет 
 
         @self.bot.message_handler(commands=['gift'])
         def gift_handler(message):
-            # Запрещаем команду в группах
             if message.chat.type != 'private':
                 self.bot.reply_to(message, "🙅‍♂️ *Не-не, дружок!* Эта команда доступна только в *личке с ботом*", parse_mode='Markdown')
                 return
                 
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
                 if len(message.text.split()) < 2:
                     sent_message = self.bot.send_message(
                         message.chat.id,
@@ -862,12 +854,15 @@ _Выбери, какого чибика подаришь_"""
 
         @self.bot.message_handler(commands=['cantina'])
         def cantina_handler(message):
-            # Запрещаем команду в группах
             if message.chat.type != 'private':
                 self.bot.reply_to(message, "🙅‍♂️ *Не-не, дружок!* Эта команда доступна только в *личке с ботом*", parse_mode='Markdown')
                 return
                 
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
                 telegram_id_str = str(message.from_user.id)
                 
                 user_order_id, user_order_data = self.get_user_active_order(message.from_user.id)
@@ -963,14 +958,11 @@ _Отличное место! Сборище наемников. Здесь мо
                                 self.bot.reply_to(message, "💰 *Слишком много!* Максимум — 440 коинов", parse_mode='Markdown')
                             return
                         
-                        # Сохраняем цену
                         if telegram_id_str in self.user_order_creation:
                             self.user_order_creation[telegram_id_str]["reward"] = reward
                         
-                        # Очищаем состояние
                         self.user_states[telegram_id_str] = None
                         
-                        # Возвращаем к созданию заказа
                         create_text = """🕍 *Создаем заказ*
 _Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию_"""
                         
@@ -1000,16 +992,14 @@ _Укажи, какого чибика охотники будут искать,
                             btn_back = types.InlineKeyboardButton("Назад", callback_data="cantina_back")
                             markup.add(btn_back)
                         
-                        # Редактируем сообщение вместо отправки нового
                         self.bot.edit_message_text(
                             create_text,
                             message.chat.id,
-                            message.message_id - 1,  # Предыдущее сообщение
+                            message.message_id - 1,
                             reply_markup=markup,
                             parse_mode='Markdown'
                         )
                         
-                        # Удаляем сообщение с вводом цены
                         self.bot.delete_message(message.chat.id, message.message_id)
                         
                     except ValueError:
@@ -1026,11 +1016,9 @@ _Укажи, какого чибика охотники будут искать,
             except Exception as e:
                 logger.error(f"Ошибка в текстовом обработчике: {e}")
 
-        # Обработчик callback для кнопок
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
             try:
-                # Проверяем владельца сообщения (только в группах)
                 if not self.check_message_ownership(call):
                     return
 
@@ -1055,7 +1043,6 @@ _Укажи, какого чибика охотники будут искать,
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
                     
-                    # Начисляем опыт за задание
                     exp_gained = random.randint(19, 25)
                     level_ups, new_level = self.add_exp(call.from_user.id, exp_gained)
                     
@@ -1075,7 +1062,6 @@ _За это ты получаешь обещанную награду. Даже
                     
                     self.user_tasks[telegram_id_str] = None
                     
-                    # Отправляем сообщение о повышении уровня с задержкой
                     if level_ups > 0:
                         threading.Thread(target=self.send_level_up_message, 
                                        args=(call.from_user.id, new_level - level_ups, new_level)).start()
@@ -1577,7 +1563,6 @@ _•••••••••••••••_
                         self.user_chibis[target_telegram_id] = []
                     self.user_chibis[target_telegram_id].append(chibi_name)
                     
-                    # Обновляем временную метку для получателя (чтобы чибик считался свежим для заказов)
                     if target_telegram_id not in self.user_chibi_timestamps:
                         self.user_chibi_timestamps[target_telegram_id] = {}
                     self.user_chibi_timestamps[target_telegram_id][chibi_name] = datetime.now()
@@ -1626,17 +1611,14 @@ _{sender_name} подарил тебе {chibi_name}!_"""
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                # Обработчики для кантины
                 elif call.data == "cantina_create_order":
                     telegram_id_str = str(call.from_user.id)
                     
-                    # Проверяем уровень пользователя
                     user_level = self.user_levels.get(telegram_id_str, 1)
                     if user_level < 7:
                         self.bot.answer_callback_query(call.id, "📊 *Ты еще не дорос!* Минимальный уровень - 7")
                         return
                     
-                    # Проверяем, есть ли уже активный заказ
                     existing_order_id, existing_order_data = self.get_user_active_order(call.from_user.id)
                     if existing_order_id is not None:
                         self.bot.answer_callback_query(call.id, "🔄 *У тебя уже есть активный заказ!*")
@@ -1787,10 +1769,8 @@ _Установи награду, которую_ *ты* _заплатишь з�
 _•••••••••••••••••_
 Введи цену и отправь мне. Рекомендованная цена : *{recommended_price}*"""
                     
-                    # Устанавливаем состояние ожидания ввода цены
                     self.user_states[telegram_id_str] = "waiting_for_reward"
                     
-                    # Редактируем текущее сообщение вместо отправки нового
                     self.bot.edit_message_text(
                         reward_text,
                         call.message.chat.id,
@@ -1839,22 +1819,18 @@ _Ты платишь:_ *{order_data['reward']}*"""
                     
                     order_data = self.user_order_creation[telegram_id_str]
                     
-                    # Проверяем, есть ли уже активный заказ
                     existing_order_id, existing_order_data = self.get_user_active_order(call.from_user.id)
                     if existing_order_id is not None:
                         self.bot.answer_callback_query(call.id, "🔄 *У тебя уже есть активный заказ!*")
                         return
                     
-                    # Проверяем баланс
                     coins = self.user_coins.get(telegram_id_str, 0)
                     if coins < order_data["reward"]:
                         self.bot.answer_callback_query(call.id, f"💸 *Недостаточно коинов!* Нужно {order_data['reward']}")
                         return
                     
-                    # Списываем коины
                     self.user_coins[telegram_id_str] = coins - order_data["reward"]
                     
-                    # Создаем заказ
                     order_id = self.next_order_id
                     self.cantina_orders[order_id] = {
                         "creator_id": telegram_id_str,
@@ -1865,16 +1841,12 @@ _Ты платишь:_ *{order_data['reward']}*"""
                     }
                     self.next_order_id += 1
                     
-                    # Инициализируем список принявших
                     self.order_accepted_by[order_id] = []
                     
-                    # Удаляем сообщение
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    # Очищаем данные создания заказа
                     del self.user_order_creation[telegram_id_str]
                     
-                    # Отправляем сообщение кантины заново
                     sent_message = self.bot.send_message(
                         call.message.chat.id,
                         "✅ *Заказ создан!*",
@@ -1882,7 +1854,6 @@ _Ты платишь:_ *{order_data['reward']}*"""
                     )
                     self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
-                    # Показываем обновленную кантину
                     cantina_text = """*🕍 Кантина*
 _Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…_"""
                     
@@ -2155,22 +2126,18 @@ _•••••••••••••••••_
                         self.bot.answer_callback_query(call.id, "🔍 *Заказ не найден!*")
                         return
                     
-                    # Возвращаем деньги
                     reward = order_data["reward"]
                     if telegram_id_str not in self.user_coins:
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
                     
-                    # Удаляем заказ
                     self.cantina_orders[order_id]["status"] = "cancelled"
                     
-                    # Уведомляем всех принявших
                     accepted_users = self.order_accepted_by.get(order_id, [])
                     for user_id in accepted_users:
                         if user_id in self.user_active_hunts:
                             del self.user_active_hunts[user_id]
                         
-                        # Удаляем время начала охоты
                         if user_id in self.hunt_start_times and order_id in self.hunt_start_times[user_id]:
                             del self.hunt_start_times[user_id][order_id]
                         
@@ -2182,7 +2149,6 @@ _•••••••••••••••••_
                         )
                         self.message_owners[(user_id, sent_message.message_id)] = user_id
                     
-                    # Очищаем список принявших
                     if order_id in self.order_accepted_by:
                         del self.order_accepted_by[order_id]
                     
@@ -2203,7 +2169,6 @@ _•••••••••••••••••_
                     
                     order_data = self.cantina_orders[order_id]
                     
-                    # Проверяем, активен ли еще заказ
                     if order_data["status"] != "active":
                         self.bot.answer_callback_query(call.id, "✅ *Заказ уже завершен или отменен!*")
                         self.bot.edit_message_text(
@@ -2214,11 +2179,9 @@ _•••••••••••••••••_
                         )
                         return
                     
-                    # Проверяем, принял ли пользователь уже этот заказ
                     is_accepted = telegram_id_str in self.order_accepted_by.get(order_id, [])
                     
                     if is_accepted:
-                        # Показываем интерфейс сдачи заказа
                         hunt_start_time = self.hunt_start_times.get(telegram_id_str, {}).get(order_id)
                         if not hunt_start_time:
                             hunt_start_time = datetime.now()
@@ -2253,7 +2216,6 @@ _•••••••••••••••••_
                             parse_mode='Markdown'
                         )
                     else:
-                        # Показываем интерфейс принятия заказа
                         creator_name = self.users.get(order_data["creator_id"], {}).get('first_name', 'Неизвестный')
                         if not creator_name or creator_name == 'Неизвестный':
                             creator_username = self.users.get(order_data["creator_id"], {}).get('username')
@@ -2262,7 +2224,6 @@ _•••••••••••••••••_
                             else:
                                 creator_name = "Неизвестный"
                         
-                        # Проверяем уровень пользователя
                         user_level = self.user_levels.get(telegram_id_str, 1)
                         if user_level < 3:
                             self.bot.answer_callback_query(call.id, "📊 *Ты еще не дорос!* Минимальный уровень - 3")
@@ -2297,40 +2258,33 @@ _•••••••••••••••••_
                         self.bot.answer_callback_query(call.id, "🔍 *Заказ не найден!*")
                         return
                     
-                    # Проверяем, активен ли заказ
                     if self.cantina_orders[order_id]["status"] != "active":
                         self.bot.answer_callback_query(call.id, "✅ *Заказ уже завершен или отменен!*")
                         return
                     
-                    # Проверяем уровень пользователя
                     user_level = self.user_levels.get(telegram_id_str, 1)
                     if user_level < 3:
                         self.bot.answer_callback_query(call.id, "📊 *Ты еще не дорос!* Минимальный уровень - 3")
                         return
                     
-                    # Проверяем, нет ли уже активной охоты
                     if telegram_id_str in self.user_active_hunts:
                         self.bot.answer_callback_query(call.id, "🔄 *У тебя уже есть активный заказ!*")
                         return
                     
-                    # Добавляем пользователя в список принявших
                     if order_id not in self.order_accepted_by:
                         self.order_accepted_by[order_id] = []
                     
                     if telegram_id_str not in self.order_accepted_by[order_id]:
                         self.order_accepted_by[order_id].append(telegram_id_str)
                     
-                    # Устанавливаем активную охоту
                     self.user_active_hunts[telegram_id_str] = order_id
                     
-                    # Сохраняем время начала охоты
                     if telegram_id_str not in self.hunt_start_times:
                         self.hunt_start_times[telegram_id_str] = {}
                     self.hunt_start_times[telegram_id_str][order_id] = datetime.now()
                     
                     self.bot.answer_callback_query(call.id, "✅ *Заказ принят!*")
                     
-                    # Возвращаем к просмотру заказа (теперь он будет показывать интерфейс сдачи)
                     order_data = self.cantina_orders[order_id]
                     
                     hunt_start_time = self.hunt_start_times[telegram_id_str][order_id]
@@ -2369,21 +2323,17 @@ _•••••••••••••••••_
                         self.bot.answer_callback_query(call.id, "🔍 *Заказ не найден!*")
                         return
                     
-                    # Удаляем пользователя из списка принявших
                     if order_id in self.order_accepted_by and telegram_id_str in self.order_accepted_by[order_id]:
                         self.order_accepted_by[order_id].remove(telegram_id_str)
                     
-                    # Удаляем активную охоту
                     if telegram_id_str in self.user_active_hunts:
                         del self.user_active_hunts[telegram_id_str]
                     
-                    # Удаляем время начала охоты
                     if telegram_id_str in self.hunt_start_times and order_id in self.hunt_start_times[telegram_id_str]:
                         del self.hunt_start_times[telegram_id_str][order_id]
                     
                     self.bot.answer_callback_query(call.id, "✅ *Отказ от заказа принят!*")
                     
-                    # Возвращаем в кантину
                     cantina_text = """*🕍 Кантина*
 _Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…_"""
                     
@@ -2448,12 +2398,10 @@ _Отличное место! Сборище наемников. Здесь мо
                     
                     order_data = self.cantina_orders[order_id]
                     
-                    # Проверяем, активен ли заказ
                     if order_data["status"] != "active":
                         self.bot.answer_callback_query(call.id, "✅ *Заказ уже завершен или отменен!*")
                         return
                     
-                    # Проверяем, есть ли свежий чибик
                     hunt_start_time = self.hunt_start_times.get(telegram_id_str, {}).get(order_id)
                     if not hunt_start_time:
                         self.bot.answer_callback_query(call.id, "⏰ *Ошибка времени охоты!*")
@@ -2463,44 +2411,35 @@ _Отличное место! Сборище наемников. Здесь мо
                         self.bot.answer_callback_query(call.id, "🎒 *У тебя нет свежего чибика для этого заказа!*")
                         return
                     
-                    # Удаляем свежий чибик у охотника (первый попавшийся)
                     if telegram_id_str in self.user_chibis and order_data["chibi_name"] in self.user_chibis[telegram_id_str]:
-                        # Находим индекс первого свежего чибика
                         for i, chibi in enumerate(self.user_chibis[telegram_id_str]):
                             if chibi == order_data["chibi_name"]:
                                 chibi_time = self.user_chibi_timestamps[telegram_id_str].get(order_data["chibi_name"])
                                 if chibi_time and chibi_time > hunt_start_time:
                                     del self.user_chibis[telegram_id_str][i]
-                                    # Обновляем временные метки
                                     if (order_data["chibi_name"] in self.user_chibi_timestamps[telegram_id_str] and
                                         self.user_chibi_timestamps[telegram_id_str][order_data["chibi_name"]] == chibi_time):
                                         del self.user_chibi_timestamps[telegram_id_str][order_data["chibi_name"]]
                                     break
                     
-                    # Начисляем награду охотнику
                     reward = order_data["reward"]
                     if telegram_id_str not in self.user_coins:
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
                     
-                    # Начисляем опыт за выполнение заказа
                     exp_gained = random.randint(14, 21)
                     level_ups, new_level = self.add_exp(call.from_user.id, exp_gained)
                     
-                    # Добавляем чибик создателю заказа
                     creator_id = order_data["creator_id"]
                     if creator_id not in self.user_chibis:
                         self.user_chibis[creator_id] = []
                     self.user_chibis[creator_id].append(order_data["chibi_name"])
                     
-                    # Удаляем сообщение с заказом
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    # Отправляем стикер
                     sticker_id = "CAACAgIAAxkBAAE9Js1pAzTTQ9xRej9YYWAs_M_2sMGFnQAC2kkAAkZFCUqenx6Y9nShgTYE"
                     self.bot.send_sticker(call.message.chat.id, sticker_id)
                     
-                    # Сообщение об успешном выполнении
                     user_name = call.from_user.first_name or "путешественник"
                     complete_text = f"""*{user_name}, ты выполнил заказ!*
 _Мои поздравления! Думаю, это было достаточно непросто, но ты — первый из наемников, кто справился с ним_ 
@@ -2515,7 +2454,6 @@ _••••••••••••••••••_
                     )
                     self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
-                    # Уведомляем создателя заказа
                     creator_name = self.users.get(creator_id, {}).get('first_name', 'Игрок')
                     sent_message = self.bot.send_message(
                         creator_id,
@@ -2524,14 +2462,12 @@ _••••••••••••••••••_
                     )
                     self.message_owners[(creator_id, sent_message.message_id)] = creator_id
                     
-                    # Уведомляем всех остальных принявших
                     accepted_users = self.order_accepted_by.get(order_id, [])
                     for user_id in accepted_users:
-                        if user_id != telegram_id_str:  # Не уведомляем исполнителя
+                        if user_id != telegram_id_str:
                             if user_id in self.user_active_hunts:
                                 del self.user_active_hunts[user_id]
                             
-                            # Удаляем время начала охоты
                             if user_id in self.hunt_start_times and order_id in self.hunt_start_times[user_id]:
                                 del self.hunt_start_times[user_id][order_id]
                             
@@ -2543,24 +2479,19 @@ _••••••••••••••••••_
                             )
                             self.message_owners[(user_id, sent_message.message_id)] = user_id
                     
-                    # Удаляем заказ
                     self.cantina_orders[order_id]["status"] = "completed"
                     
-                    # Очищаем список принявших
                     if order_id in self.order_accepted_by:
                         del self.order_accepted_by[order_id]
                     
-                    # Удаляем активные охоты для этого заказа
                     for user_id in list(self.user_active_hunts.keys()):
                         if self.user_active_hunts[user_id] == order_id:
                             del self.user_active_hunts[user_id]
                     
-                    # Удаляем временные метки охоты
                     for user_id in list(self.hunt_start_times.keys()):
                         if order_id in self.hunt_start_times[user_id]:
                             del self.hunt_start_times[user_id][order_id]
                     
-                    # Отправляем сообщение о повышении уровня с задержкой
                     if level_ups > 0:
                         threading.Thread(target=self.send_level_up_message, 
                                        args=(call.from_user.id, new_level - level_ups, new_level)).start()
@@ -2588,7 +2519,7 @@ _••••••••••••••••••_
                     
             except Exception as e:
                 logger.error(f"Ошибка в callback: {e}")
-                self.bot.answer_callback_query(call.id, "⛓️‍💥 *Ой, что-то пошло не так!*")
+                self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
 
     def run(self):
         logger.info("🤖 Чиби-бот запущен!")
