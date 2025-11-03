@@ -22,6 +22,8 @@ class ChibiBot:
         self.user_items = {}   # Храним предметы пользователей: {user_id: {"🧧 Чиби-пак": 1}}
         self.user_tasks = {}   # Храним текущие задания пользователей: {user_id: {"chibi": "имя", "reward": 35, "emoji": "🐊", "name": "Грирт"}}
         self.user_coins = {}   # Храним коины пользователей: {user_id: 0}
+        self.user_levels = {}  # Храним уровни пользователей: {user_id: 1}
+        self.user_exp = {}     # Храним опыт пользователей: {user_id: 0}
         self.gift_selections = {}  # Храним выбранных чибиков для подарка: {user_id: {"target_user_id": "123", "chibi_name": "имя"}}
         self.cantina_orders = {}   # Храним заказы кантины
         self.user_order_creation = {}  # Храним данные создания заказа
@@ -31,21 +33,7 @@ class ChibiBot:
         self.user_chibi_timestamps = {} # Храним когда получены чибики: {user_id: {chibi_name: datetime}}
         self.hunt_start_times = {}     # Храним время начала охоты: {user_id: {order_id: datetime}}
         self.next_order_id = 1
-        self.user_message_ownership = {} # Храним владельцев сообщений: {message_id: user_id}
-        self.admin_usernames = ['temkazavr', 'ribapibaa']  # Администраторы
-        
-        # Система уровней
-        self.user_exp = {}  # Опыт пользователей: {user_id: exp}
-        self.user_levels = {}  # Уровни пользователей: {user_id: level}
-        self.level_requirements = {
-            1: 0,
-            2: 100,
-            3: 230,
-            4: 300,
-            5: 385,
-            6: 435,
-            7: 520
-        }
+        self.message_owners = {}       # Храним владельцев сообщений: {(chat_id, message_id): user_id}
         
     def generate_unique_user_id(self):
         attempts = 0
@@ -84,61 +72,88 @@ class ChibiBot:
             self.user_items[telegram_id_str] = {"🧧 Чиби-пак": 1}
             # Инициализируем коины
             self.user_coins[telegram_id_str] = 0
+            # Инициализируем уровни и опыт
+            self.user_levels[telegram_id_str] = 1
+            self.user_exp[telegram_id_str] = 0
             # Инициализируем временные метки чибиков
             self.user_chibi_timestamps[telegram_id_str] = {}
-            # Инициализируем опыт и уровень
-            self.user_exp[telegram_id_str] = 0
-            self.user_levels[telegram_id_str] = 1
             logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
 
-    def add_exp(self, telegram_id, exp_range):
+    def get_required_exp(self, level):
+        """Вычисляет требуемый опыт для перехода на следующий уровень"""
+        if level < 7:
+            return 100
+        elif level < 15:
+            return 150
+        elif level < 30:
+            return 200
+        else:
+            return 300
+
+    def add_exp(self, telegram_id, exp_amount):
         """Добавляет опыт пользователю и проверяет повышение уровня"""
         telegram_id_str = str(telegram_id)
-        exp_gained = random.randint(exp_range[0], exp_range[1])
         
-        if telegram_id_str not in self.user_exp:
-            self.user_exp[telegram_id_str] = 0
         if telegram_id_str not in self.user_levels:
             self.user_levels[telegram_id_str] = 1
-            
-        old_level = self.user_levels[telegram_id_str]
-        self.user_exp[telegram_id_str] += exp_gained
+        if telegram_id_str not in self.user_exp:
+            self.user_exp[telegram_id_str] = 0
+        
+        current_level = self.user_levels[telegram_id_str]
+        self.user_exp[telegram_id_str] += exp_amount
         
         # Проверяем повышение уровня
-        new_level = old_level
-        for level, req in sorted(self.level_requirements.items(), reverse=True):
-            if self.user_exp[telegram_id_str] >= req:
-                new_level = level
-                break
-                
-        level_up = new_level > old_level
-        self.user_levels[telegram_id_str] = new_level
+        required_exp = self.get_required_exp(current_level)
+        while self.user_exp[telegram_id_str] >= required_exp:
+            self.user_exp[telegram_id_str] -= required_exp
+            old_level = current_level
+            current_level += 1
+            self.user_levels[telegram_id_str] = current_level
+            
+            # Отправляем сообщение о повышении уровня
+            self.send_level_up_message(telegram_id, old_level, current_level)
+            
+            required_exp = self.get_required_exp(current_level)
         
-        return exp_gained, level_up, new_level
+        return current_level
 
-    def get_level_info(self, telegram_id):
-        """Получает информацию об уровне пользователя"""
+    def send_level_up_message(self, telegram_id, old_level, new_level):
+        """Отправляет сообщение о повышении уровня"""
         telegram_id_str = str(telegram_id)
-        if telegram_id_str not in self.user_levels:
-            self.user_levels[telegram_id_str] = 1
-        if telegram_id_str not in self.user_exp:
-            self.user_exp[telegram_id_str] = 0
-            
-        current_level = self.user_levels[telegram_id_str]
-        current_exp = self.user_exp[telegram_id_str]
+        user_name = self.users.get(telegram_id_str, {}).get('first_name', 'путешественник')
         
-        # Находим следующий уровень
-        next_level = current_level + 1
-        if next_level in self.level_requirements:
-            exp_needed = self.level_requirements[next_level]
+        # Начисляем чиби-пак
+        if telegram_id_str not in self.user_items:
+            self.user_items[telegram_id_str] = {}
+        if "🧧 Чиби-пак" not in self.user_items[telegram_id_str]:
+            self.user_items[telegram_id_str]["🧧 Чиби-пак"] = 0
+        self.user_items[telegram_id_str]["🧧 Чиби-пак"] += 1
+        
+        # Отправляем стикер
+        sticker_id = "CAACAgIAAxkBAAE9VHtpCGLDUXiyHkIeGqv7M2eqFbN3eQAC1kgAAuSPEUq4MV_FOLGn0zYE"
+        self.bot.send_sticker(telegram_id, sticker_id)
+        
+        # Отправляем сообщение
+        level_text = f"""*Эй, {user_name}!*
+_Ты только что апнул новый уровень! Поздравляю!_
+`•••••••••••••••••••`
+*Уровень {old_level} —> Уровень {new_level}*
+`•••••••••••••••••••`
+И чтобы ты не расслаблялся, держи небольшой подгон:
++ *🧧 1* Чиби-пак"""
+        
+        sent_message = self.bot.send_message(telegram_id, level_text, parse_mode='Markdown')
+        self.message_owners[(telegram_id, sent_message.message_id)] = telegram_id_str
+
+    def format_exp(self, exp):
+        """Форматирует опыт для отображения"""
+        if exp < 1000:
+            return str(exp)
+        elif exp < 1000000:
+            return f"{exp/1000:.1f}K".replace('.0K', 'K')
         else:
-            # Для уровней выше 7 используем прогрессию
-            last_level = max(self.level_requirements.keys())
-            base_exp = self.level_requirements[last_level]
-            exp_needed = base_exp + (next_level - last_level) * 120
-            
-        return current_level, current_exp, exp_needed
+            return f"{exp/1000000:.1f}M".replace('.0M', 'M')
 
     def add_chibi_to_user(self, telegram_id, chibi_name):
         """Добавляет чибика пользователю с временной меткой"""
@@ -420,98 +435,24 @@ _{task_data['phrase']}_
         return f"{date.day}{months[date.month-1]} {date.year}"
 
     def check_message_ownership(self, call):
-        """Проверяет, принадлежит ли сообщение пользователю"""
-        # В личных сообщениях разрешаем все
+        """Проверяет, принадлежит ли сообщение пользователю (только в группах)"""
         if call.message.chat.type == 'private':
             return True
             
         telegram_id_str = str(call.from_user.id)
-        message_id = call.message.message_id
+        message_key = (call.message.chat.id, call.message.message_id)
         
-        if message_id in self.user_message_ownership:
-            if self.user_message_ownership[message_id] != telegram_id_str:
-                # Случайный ответ для чужих кнопок
-                responses = ["Не твое!", "Хватит тыкать, бесполезно же!"]
-                self.bot.answer_callback_query(call.id, random.choice(responses))
+        if message_key in self.message_owners:
+            if self.message_owners[message_key] != telegram_id_str:
+                self.bot.answer_callback_query(call.id, "Не трогай чужое!")
                 return False
         return True
-
-    def find_user_by_identifier(self, identifier):
-        """Находит пользователя по user_id, username или telegram_id"""
-        # Убираем @ если есть
-        if identifier.startswith('@'):
-            identifier = identifier[1:]
-            
-        # Поиск по user_id (сгенерированному ID)
-        for telegram_id_str, user_data in self.users.items():
-            if user_data.get('user_id') == identifier:
-                return user_data, telegram_id_str
-                
-        # Поиск по username
-        for telegram_id_str, user_data in self.users.items():
-            if user_data.get('username') == identifier:
-                return user_data, telegram_id_str
-                
-        # Поиск по telegram_id (число или строка)
-        if identifier in self.users:
-            return self.users[identifier], identifier
-            
-        # Если identifier - число, пробуем найти как telegram_id
-        try:
-            if str(int(identifier)) in self.users:
-                return self.users[str(int(identifier))], str(int(identifier))
-        except ValueError:
-            pass
-            
-        return None, None
-
-    def send_level_up_message(self, chat_id, user_name, new_level, telegram_id_str):
-        """Отправляет сообщение о повышении уровня"""
-        sticker_id = "CAACAgIAAxkBAAE9Ox5pBRLv2Hxcf4ocN9T7WMDxyvUutQADSwAC8d0RSrm2zs5__WV5NgQ"
-        self.bot.send_sticker(chat_id, sticker_id)
-        
-        # Начисляем награды
-        reward_text = f"""*Эй, {user_name}!* 
-_Ты только что апнул уровень {new_level}! Поздравляю!_ 
-_•••••••••••••••••••_
-+ 🧧 *1* Чиби-пак 
-
-_Это тебе небольшой подгон, чтоб не расслаблялся!"""
-        
-        # Выдаем чиби-пак
-        if telegram_id_str not in self.user_items:
-            self.user_items[telegram_id_str] = {}
-        if "🧧 Чиби-пак" not in self.user_items[telegram_id_str]:
-            self.user_items[telegram_id_str]["🧧 Чиби-пак"] = 0
-        self.user_items[telegram_id_str]["🧧 Чиби-пак"] += 1
-        
-        # С 5 уровня добавляем коины
-        if new_level >= 5:
-            coin_reward = random.randint(10, 20)
-            if telegram_id_str not in self.user_coins:
-                self.user_coins[telegram_id_str] = 0
-            self.user_coins[telegram_id_str] += coin_reward
-            reward_text += f"\n\n+ *💰 {coin_reward}* коинов"
-        
-        return self.bot.send_message(chat_id, reward_text, parse_mode='Markdown')
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
-            # Проверяем, является ли чат группой
+            # Игнорируем команду /start в группах
             if message.chat.type != 'private':
-                markup = types.InlineKeyboardMarkup()
-                btn_private = types.InlineKeyboardButton(
-                    "Перейти в ЛС", 
-                    url=f"https://t.me/{self.bot.get_me().username}?start=start"
-                )
-                markup.add(btn_private)
-                self.bot.reply_to(
-                    message, 
-                    "🙅‍♂️ *Не-не, дружок, эти команды доступны только в личке с ботом*", 
-                    reply_markup=markup,
-                    parse_mode='Markdown'
-                )
                 return
                 
             try:
@@ -541,45 +482,36 @@ _Это тебе небольшой подгон, чтоб не расслабл
                     markup.add(btn_channel)
                     sent_message = self.bot.send_message(message.chat.id, welcome_text, reply_markup=markup, parse_mode='Markdown')
                     # Сохраняем владельца сообщения
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
                     sent_message = self.bot.send_message(message.chat.id, BOT_TEXTS['already_started'], parse_mode='Markdown')
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                sent_message = self.bot.send_message(message.chat.id, "🙅‍♂️ *Ой-ой, что-то пошло не так! Попробуй позже*", parse_mode='Markdown')
-                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
 
-        @self.bot.message_handler(commands=['abme'])
-        def abme_handler(message):
+        @self.bot.message_handler(commands=['myid'])
+        def myid_handler(message):
             try:
                 user_data, _ = self.get_or_create_user(message.from_user.id)
                 user_id = user_data['user_id']
-                user_name = user_data['first_name'] or "путешественник"
                 
-                # Получаем информацию об уровне
-                current_level, current_exp, exp_needed = self.get_level_info(message.from_user.id)
-                
-                profile_text = f"""*💫 Профиль игрока {user_name}*
-
-Твой айди: `{user_id}`
-Уровень: *{current_level}* ({current_exp}/{exp_needed})"""
-                
+                response_text = f"⭐️ Твой айди — `{user_id}`"
                 if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, profile_text, parse_mode='Markdown')
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    sent_message = self.bot.send_message(message.chat.id, response_text, parse_mode='Markdown')
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, profile_text, parse_mode='Markdown')
+                    self.bot.reply_to(message, response_text, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                error_msg = "🙅‍♂️ *Ой-ой, что-то пошло не так! Попробуй позже*"
                 if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, error_msg, parse_mode='Markdown')
+                    self.bot.reply_to(message, "❌ Ошибка. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['balance'])
         def balance_handler(message):
@@ -590,18 +522,17 @@ _Это тебе небольшой подгон, чтоб не расслабл
                 balance_text = f"💰 У тебя — *{coins}* коинов!"
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(message.chat.id, balance_text, parse_mode='Markdown')
-                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
                     self.bot.reply_to(message, balance_text, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
-                error_msg = "🙅‍♂️ *Ой-ой, что-то пошло не так! Попробуй позже*"
                 if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка. Попробуйте позже.")
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, error_msg, parse_mode='Markdown')
+                    self.bot.reply_to(message, "❌ Ошибка. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['mart'])
         def mart_handler(message):
@@ -620,18 +551,17 @@ _Джавы, может, и не отличаются умом, но зато т
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
                     self.bot.reply_to(message, mart_text, reply_markup=markup, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии лавки: {e}")
-                error_msg = "🙅‍♂️ *Ой-ой, что-то пошло не так! Попробуй позже*"
                 if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при открытии лавки. Попробуйте позже.")
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, error_msg, parse_mode='Markdown')
+                    self.bot.reply_to(message, "❌ Ошибка при открытии лавки. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['chibi'])
         def chibi_handler(message):
@@ -640,16 +570,12 @@ _Джавы, может, и не отличаются умом, но зато т
                 file_path, chibi_name, rarity = self.get_random_chibi(from_pack=False)
                 
                 if file_path is None:
-                    error_msg = "🙅‍♂️ *Чибики временно отдыхают! Попробуй позже*"
                     if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
-                        self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                        sent_message = self.bot.send_message(message.chat.id, "❌ Чиби временно недоступны. Попробуйте позже.")
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     else:
-                        self.bot.reply_to(message, error_msg, parse_mode='Markdown')
+                        self.bot.reply_to(message, "❌ Чиби временно недоступны. Попробуйте позже.")
                     return
-                
-                # Добавляем опыт за чибика
-                exp_gained, level_up, new_level = self.add_exp(message.from_user.id, (12, 21))
                 
                 # Проверяем, есть ли активная охота у пользователя
                 active_hunt_order_id = self.user_active_hunts.get(telegram_id_str)
@@ -665,6 +591,10 @@ _Джавы, может, и не отличаются умом, но зато т
                 # Получаем количество этого чибика у пользователя
                 chibi_count = self.get_chibi_count(message.from_user.id, chibi_name)
                 
+                # Начисляем опыт за чибика
+                exp_gained = random.randint(12, 19)
+                new_level = self.add_exp(message.from_user.id, exp_gained)
+                
                 # Формируем текст сообщения
                 rarity_emoji = "🔷" if rarity == "Common" else "💠"
                 
@@ -673,16 +603,17 @@ _Джавы, может, и не отличаются умом, но зато т
 _Этот чибик нужен тебе, чтобы выполнить заказ в кантине! Скорее сдай его, пока конкуренты тебя не опередили_
 `•••••••••••••••••••`
 Редкость: {rarity_emoji} _{rarity}_
-У тебя: *{chibi_count}*"""
+У тебя: *{chibi_count}*
+`•••••••••••••••••••`
++ ⭐️ *{exp_gained}* опыта"""
                 else:
                     chibi_text = f"""*🔥 Тебе выпал — {chibi_name}!*
 _Надеюсь, он тебе понравился! Приходи еще через *3ч 59м*_
 `•••••••••••••••••••`
 Редкость: {rarity_emoji} _{rarity}_
-У тебя: {chibi_count}"""
-                
-                # Добавляем информацию об опыте
-                chibi_text += f"\n\n+ *⭐️ {exp_gained}* опыта"
+У тебя: {chibi_count}
+`•••••••••••••••••••`
++ ⭐️ *{exp_gained}* опыта"""
                 
                 # Отправляем картинку с текстом
                 with open(file_path, 'rb') as photo:
@@ -693,31 +624,26 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                             caption=chibi_text,
                             parse_mode='Markdown'
                         )
-                        self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     else:
-                        # В группах отправляем без реплая
+                        # В группах отправляем фото без реплая
                         sent_message = self.bot.send_photo(
                             message.chat.id,
                             photo,
                             caption=chibi_text,
                             parse_mode='Markdown'
                         )
-                        self.user_message_ownership[sent_message.message_id] = telegram_id_str
-                
-                # Отправляем сообщение о повышении уровня, если было
-                if level_up:
-                    self.send_level_up_message(message.chat.id, message.from_user.first_name or "путешественник", new_level, telegram_id_str)
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     
                 logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
                     
             except Exception as e:
                 logger.error(f"Ошибка при отправке чиби: {e}")
-                error_msg = "🙅‍♂️ *Ой-ой, что-то пошло не так с чибиком! Попробуй позже*"
                 if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при получении чиби. Попробуйте позже.")
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, error_msg, parse_mode='Markdown')
+                    self.bot.reply_to(message, "❌ Ошибка при получении чиби. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['task'])
         def task_handler(message):
@@ -743,18 +669,17 @@ _Надеюсь, он тебе понравился! Приходи еще че�
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
                     self.bot.reply_to(message, task_text, reply_markup=markup, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка при генерации задания: {e}")
-                error_msg = "🙅‍♂️ *Ой-ой, задание сломалось! Попробуй позже*"
                 if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при создании задания. Попробуйте позже.")
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, error_msg, parse_mode='Markdown')
+                    self.bot.reply_to(message, "❌ Ошибка при создании задания. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['menu'])
         def menu_handler(message):
@@ -777,45 +702,33 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
                     self.bot.reply_to(message, menu_text, reply_markup=markup, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии меню: {e}")
-                error_msg = "🙅‍♂️ *Ой-ой, меню не открывается! Попробуй позже*"
                 if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, error_msg, parse_mode='Markdown')
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при открытии меню. Попробуйте позже.")
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
-                    self.bot.reply_to(message, error_msg, parse_mode='Markdown')
+                    self.bot.reply_to(message, "❌ Ошибка при открытии меню. Попробуйте позже.")
 
         @self.bot.message_handler(commands=['gift'])
         def gift_handler(message):
             # Запрещаем команду в группах
             if message.chat.type != 'private':
-                markup = types.InlineKeyboardMarkup()
-                btn_private = types.InlineKeyboardButton(
-                    "Перейти в ЛС", 
-                    url=f"https://t.me/{self.bot.get_me().username}?start=gift"
-                )
-                markup.add(btn_private)
-                self.bot.reply_to(
-                    message, 
-                    "🙅‍♂️ *Не-не, дружок, эти команды доступны только в личке с ботом*", 
-                    reply_markup=markup,
-                    parse_mode='Markdown'
-                )
+                self.bot.reply_to(message, "🙅‍♂️ Не-не, дружок! Эта команда доступна только в *личке с ботом*_", parse_mode='Markdown')
                 return
                 
             try:
                 if len(message.text.split()) < 2:
                     sent_message = self.bot.send_message(
                         message.chat.id,
-                        "🙅‍♂️ *Нет, дружище, ты ввел что-то не так!*\n_Попробуй:_ `/gift 1234А`",
+                        "❌ Неверный формат команды. Используй: `/gift [ID_пользователя]`",
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     return
                 
                 target_user_id = message.text.split()[1].strip()
@@ -832,19 +745,19 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 if not target_user_found:
                     sent_message = self.bot.send_message(
                         message.chat.id,
-                        "🙅‍♂️ *Такого пользователя не существует! Проверь айди*",
+                        "❌ Пользователь с таким ID не найден.",
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     return
                 
                 if str(message.from_user.id) in self.users and self.users[str(message.from_user.id)]['user_id'] == target_user_id:
                     sent_message = self.bot.send_message(
                         message.chat.id,
-                        "🙅‍♂️ *Нельзя отправить подарок самому себе!*",
+                        "❌ Нельзя отправить подарок самому себе!",
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     return
                 
                 telegram_id_str = str(message.from_user.id)
@@ -864,10 +777,10 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 if not chibis:
                     sent_message = self.bot.send_message(
                         message.chat.id,
-                        "🙅‍♂️ *У тебя нет чибиков для подарка!*",
+                        "❌ У тебя нет чибиков для подарка!",
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     return
                 
                 gift_text = f"""✨ *О, да ты у нас щедрый!*
@@ -899,33 +812,18 @@ _Выбери, какого чибика подаришь_"""
                     reply_markup=markup,
                     parse_mode='Markdown'
                 )
-                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 
             except Exception as e:
                 logger.error(f"Ошибка при отправке подарка: {e}")
-                sent_message = self.bot.send_message(
-                    message.chat.id, 
-                    "🙅‍♂️ *Ой-ой, подарок сломался! Попробуй позже*", 
-                    parse_mode='Markdown'
-                )
-                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при отправке подарка. Попробуйте позже.")
+                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['cantina'])
         def cantina_handler(message):
             # Запрещаем команду в группах
             if message.chat.type != 'private':
-                markup = types.InlineKeyboardMarkup()
-                btn_private = types.InlineKeyboardButton(
-                    "Перейти в ЛС", 
-                    url=f"https://t.me/{self.bot.get_me().username}?start=cantina"
-                )
-                markup.add(btn_private)
-                self.bot.reply_to(
-                    message, 
-                    "🙅‍♂️ *Не-не, дружок, эти команды доступны только в личке с ботом*", 
-                    reply_markup=markup,
-                    parse_mode='Markdown'
-                )
+                self.bot.reply_to(message, "🙅‍♂️ Не-не, дружок! Эта команда доступна только в *личке с ботом*_", parse_mode='Markdown')
                 return
                 
             try:
@@ -984,74 +882,19 @@ _Отличное место! Сборище наемников. Здесь мо
                     reply_markup=markup,
                     parse_mode='Markdown'
                 )
-                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии кантины: {e}")
-                sent_message = self.bot.send_message(
-                    message.chat.id, 
-                    "🙅‍♂️ *Ой-ой, кантина закрыта! Попробуй позже*", 
-                    parse_mode='Markdown'
-                )
-                self.user_message_ownership[sent_message.message_id] = str(message.from_user.id)
+                sent_message = self.bot.send_message(message.chat.id, "❌ Ошибка при открытии кантины. Попробуйте позже.")
+                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
 
         @self.bot.message_handler(func=lambda message: True)
         def text_handler(message):
             try:
                 telegram_id_str = str(message.from_user.id)
                 
-                # Проверяем административные команды
-                if message.from_user.username in self.admin_usernames:
-                    text = message.text.strip()
-                    
-                    # Обработка выдачи паков
-                    if text.startswith('reclaim_') and '_packs.value=' in text and '_status=true' in text:
-                        try:
-                            # Парсим команду
-                            parts = text.split('_')
-                            user_identifier = parts[1]
-                            value_part = text.split('packs.value=')[1].split('_status=true')[0]
-                            amount = int(value_part)
-                            
-                            # Находим пользователя
-                            user_data, target_telegram_id = self.find_user_by_identifier(user_identifier)
-                            if not user_data:
-                                if message.chat.type == 'private':
-                                    sent_message = self.bot.send_message(message.chat.id, "🙅‍♂️ *Пользователь не найден!*", parse_mode='Markdown')
-                                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
-                                else:
-                                    self.bot.reply_to(message, "🙅‍♂️ *Пользователь не найден!*", parse_mode='Markdown')
-                                return
-                            
-                            # Выдаем паки
-                            if target_telegram_id not in self.user_items:
-                                self.user_items[target_telegram_id] = {}
-                            if "🧧 Чиби-пак" not in self.user_items[target_telegram_id]:
-                                self.user_items[target_telegram_id]["🧧 Чиби-пак"] = 0
-                            self.user_items[target_telegram_id]["🧧 Чиби-пак"] += amount
-                            
-                            # Отправляем стикер
-                            sticker_id = "CAACAgIAAxkBAAE9Ox5pBRLv2Hxcf4ocN9T7WMDxyvUutQADSwAC8d0RSrm2zs5__WV5NgQ"
-                            self.bot.send_sticker(message.chat.id, sticker_id)
-                            
-                            # Отправляем сообщение
-                            response_text = f"*{amount} 🧧 Чиби-паков выдано игроку {user_data['first_name']}!*"
-                            if message.chat.type == 'private':
-                                sent_message = self.bot.send_message(message.chat.id, response_text, parse_mode='Markdown')
-                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
-                            else:
-                                self.bot.reply_to(message, response_text, parse_mode='Markdown')
-                                
-                        except Exception as e:
-                            logger.error(f"Ошибка в команде выдачи паков: {e}")
-                            if message.chat.type == 'private':
-                                sent_message = self.bot.send_message(message.chat.id, "🙅‍♂️ *Ошибка в формате команды!*", parse_mode='Markdown')
-                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
-                            else:
-                                self.bot.reply_to(message, "🙅‍♂️ *Ошибка в формате команды!*", parse_mode='Markdown')
-                
-                # Обработка обычных состояний
-                elif self.user_states.get(telegram_id_str) == "waiting_for_reward":
+                if self.user_states.get(telegram_id_str) == "waiting_for_reward":
                     try:
                         reward = int(message.text)
                         recommended_price = random.randint(32, 45)
@@ -1060,23 +903,23 @@ _Отличное место! Сборище наемников. Здесь мо
                             if message.chat.type == 'private':
                                 sent_message = self.bot.send_message(
                                     message.chat.id,
-                                    "🙅‍♂️ *Слишком мало! Минимум — 25*",
+                                    "❌ Слишком мало! Минимум — 25",
                                     parse_mode='Markdown'
                                 )
-                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                                self.message_owners[(message.chat.id, sent_message.message_id)] = telegram_id_str
                             else:
-                                self.bot.reply_to(message, "🙅‍♂️ *Слишком мало! Минимум — 25*", parse_mode='Markdown')
+                                self.bot.reply_to(message, "❌ Слишком мало! Минимум — 25", parse_mode='Markdown')
                             return
                         elif reward > 440:
                             if message.chat.type == 'private':
                                 sent_message = self.bot.send_message(
                                     message.chat.id,
-                                    "🙅‍♂️ *Слишком много! Максимум — 440*",
+                                    "❌ Слишком много! Максимум — 440",
                                     parse_mode='Markdown'
                                 )
-                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                                self.message_owners[(message.chat.id, sent_message.message_id)] = telegram_id_str
                             else:
-                                self.bot.reply_to(message, "🙅‍♂️ *Слишком много! Максимум — 440*", parse_mode='Markdown')
+                                self.bot.reply_to(message, "❌ Слишком много! Максимум — 440", parse_mode='Markdown')
                             return
                         
                         # Сохраняем цену
@@ -1132,12 +975,12 @@ _Укажи, какого чибика охотники будут искать,
                         if message.chat.type == 'private':
                             sent_message = self.bot.send_message(
                                 message.chat.id,
-                                "🙅‍♂️ *Пожалуйста, введи число!*",
+                                "❌ Пожалуйста, введи число!",
                                 parse_mode='Markdown'
                             )
-                            self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                            self.message_owners[(message.chat.id, sent_message.message_id)] = telegram_id_str
                         else:
-                            self.bot.reply_to(message, "🙅‍♂️ *Пожалуйста, введи число!*", parse_mode='Markdown')
+                            self.bot.reply_to(message, "❌ Пожалуйста, введи число!", parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка в текстовом обработчике: {e}")
@@ -1171,26 +1014,23 @@ _Укажи, какого чибика охотники будут искать,
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
                     
-                    # Добавляем опыт за задание
-                    exp_gained, level_up, new_level = self.add_exp(call.from_user.id, (21, 32))
+                    # Начисляем опыт за задание
+                    exp_gained = random.randint(19, 25)
+                    self.add_exp(call.from_user.id, exp_gained)
                     
                     user_nick = call.from_user.first_name or "путешественник"
                     complete_text = f"""*Ес! {user_nick}, ты выполнил таск!*
 _За это ты получаешь обещанную награду. Даже не буду гадать, сколько ты выбивал нужного чибика_
-`•••••••••••••••`
+`•••••••••••••••••••`
 + 💰*{reward}* коинов
-+ *⭐️ {exp_gained}* опыта"""
++ ⭐️ *{exp_gained}* опыта"""
                     
                     sent_message = self.bot.send_message(
                         call.message.chat.id,
                         complete_text,
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
-                    
-                    # Отправляем сообщение о повышении уровня, если было
-                    if level_up:
-                        self.send_level_up_message(call.message.chat.id, call.from_user.first_name or "путешественник", new_level, telegram_id_str)
+                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
                     self.user_tasks[telegram_id_str] = None
                     
@@ -1211,7 +1051,7 @@ _Осталось 8ч 59м_"""
                         skip_text,
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
                 elif call.data == "task_skip_confirm":
                     telegram_id_str = str(call.from_user.id)
@@ -1443,7 +1283,7 @@ _Надеюсь, он тебе понравился!_
                                     caption=chibi_text,
                                     parse_mode='Markdown'
                                 )
-                                self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                                self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
                     self.bot.answer_callback_query(call.id, f"Открыто {count} Чиби-пак(ов)!")
                     
@@ -1705,7 +1545,7 @@ _Надеюсь, {target_name} он понравится!_*"""
                         sender_text,
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
                     sticker_id_receiver = "CAACAgIAAxkBAAE9OxxpBRLZ5OANTuRD-97sRPdCONwv0AACU0YAAkVlEErI0vjxKMrHnTYE"
                     self.bot.send_sticker(target_telegram_id, sticker_id_receiver)
@@ -1723,7 +1563,7 @@ _{sender_name} подарил тебе {chibi_name}!_"""
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = target_telegram_id
+                    self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
                     
                     del self.gift_selections[telegram_id_str]
                     
@@ -1740,9 +1580,9 @@ _{sender_name} подарил тебе {chibi_name}!_"""
                     telegram_id_str = str(call.from_user.id)
                     
                     # Проверяем уровень пользователя
-                    current_level, _, _ = self.get_level_info(call.from_user.id)
-                    if current_level < 7:
-                        self.bot.answer_callback_query(call.id, "✨ Ты еще не дорос, минимальный уровень - 7")
+                    user_level = self.user_levels.get(telegram_id_str, 1)
+                    if user_level < 7:
+                        self.bot.answer_callback_query(call.id, "Ты еще не дорос. Минимальный уровень - 7")
                         return
                     
                     # Проверяем, есть ли уже активный заказ
@@ -1989,7 +1829,7 @@ _Ты платишь:_ *{order_data['reward']}*"""
                         "✅ Заказ создан!",
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
                     # Показываем обновленную кантину
                     cantina_text = """*🕍 Кантина*
@@ -2044,7 +1884,7 @@ _Отличное место! Сборище наемников. Здесь мо
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
+                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
                 elif call.data == "cantina_final_cancel":
                     telegram_id_str = str(call.from_user.id)
@@ -2289,7 +2129,7 @@ _•••••••••••••••••_
                             f"*Хей, {user_name}!*\n_Заказ, который ты принял, был отозван! Соболезную_",
                             parse_mode='Markdown'
                         )
-                        self.user_message_ownership[sent_message.message_id] = user_id
+                        self.message_owners[(user_id, sent_message.message_id)] = user_id
                     
                     # Очищаем список принявших
                     if order_id in self.order_accepted_by:
@@ -2311,12 +2151,6 @@ _•••••••••••••••••_
                         return
                     
                     order_data = self.cantina_orders[order_id]
-                    
-                    # Проверяем уровень пользователя для принятия заказа
-                    current_level, _, _ = self.get_level_info(call.from_user.id)
-                    if current_level < 3:
-                        self.bot.answer_callback_query(call.id, "✨ Ты еще не дорос, минимальный уровень - 3")
-                        return
                     
                     # Проверяем, активен ли еще заказ
                     if order_data["status"] != "active":
@@ -2377,6 +2211,12 @@ _•••••••••••••••••_
                             else:
                                 creator_name = "Неизвестный"
                         
+                        # Проверяем уровень пользователя
+                        user_level = self.user_levels.get(telegram_id_str, 1)
+                        if user_level < 3:
+                            self.bot.answer_callback_query(call.id, "Ты еще не дорос. Минимальный уровень - 3")
+                            return
+                        
                         order_text = f"""*🕍 Заказ игрока {creator_name}*
 _Подумай, насколько тебе это выгодно, и прими решение_ 
 _•••••••••••••••••_
@@ -2406,15 +2246,15 @@ _•••••••••••••••••_
                         self.bot.answer_callback_query(call.id, "Заказ не найден!")
                         return
                     
-                    # Проверяем уровень пользователя
-                    current_level, _, _ = self.get_level_info(call.from_user.id)
-                    if current_level < 3:
-                        self.bot.answer_callback_query(call.id, "✨ Ты еще не дорос, минимальный уровень - 3")
-                        return
-                    
                     # Проверяем, активен ли заказ
                     if self.cantina_orders[order_id]["status"] != "active":
                         self.bot.answer_callback_query(call.id, "Заказ уже завершен или отменен!")
+                        return
+                    
+                    # Проверяем уровень пользователя
+                    user_level = self.user_levels.get(telegram_id_str, 1)
+                    if user_level < 3:
+                        self.bot.answer_callback_query(call.id, "Ты еще не дорос. Минимальный уровень - 3")
                         return
                     
                     # Проверяем, нет ли уже активной охоты
@@ -2592,8 +2432,9 @@ _Отличное место! Сборище наемников. Здесь мо
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
                     
-                    # Добавляем опыт за выполнение заказа
-                    exp_gained, level_up, new_level = self.add_exp(call.from_user.id, (20, 29))
+                    # Начисляем опыт за выполнение заказа
+                    exp_gained = random.randint(14, 21)
+                    self.add_exp(call.from_user.id, exp_gained)
                     
                     # Добавляем чибик создателю заказа
                     creator_id = order_data["creator_id"]
@@ -2614,18 +2455,14 @@ _Отличное место! Сборище наемников. Здесь мо
 _Мои поздравления! Думаю, это было достаточно непросто, но ты — первый из наемников, кто справился с ним_ 
 _••••••••••••••••••_
 + *💰 {reward}* чибикоинов
-+ *⭐️ {exp_gained}* опыта"""
++ ⭐️ *{exp_gained}* опыта"""
                     
                     sent_message = self.bot.send_message(
                         call.message.chat.id,
                         complete_text,
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = telegram_id_str
-                    
-                    # Отправляем сообщение о повышении уровня, если было
-                    if level_up:
-                        self.send_level_up_message(call.message.chat.id, call.from_user.first_name or "путешественник", new_level, telegram_id_str)
+                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
                     # Уведомляем создателя заказа
                     creator_name = self.users.get(creator_id, {}).get('first_name', 'Игрок')
@@ -2634,7 +2471,7 @@ _••••••••••••••••••_
                         f"*🎉 Твой заказ выполнен!*\n_Охотник {user_name} доставил тебе {order_data['chibi_name']}!_",
                         parse_mode='Markdown'
                     )
-                    self.user_message_ownership[sent_message.message_id] = creator_id
+                    self.message_owners[(creator_id, sent_message.message_id)] = creator_id
                     
                     # Уведомляем всех остальных принявших
                     accepted_users = self.order_accepted_by.get(order_id, [])
@@ -2653,7 +2490,7 @@ _••••••••••••••••••_
                                 f"*Хей, {user_name}!*\n_Заказ, который ты принял, был завершен! Соболезную_",
                                 parse_mode='Markdown'
                             )
-                            self.user_message_ownership[sent_message.message_id] = user_id
+                            self.message_owners[(user_id, sent_message.message_id)] = user_id
                     
                     # Удаляем заказ
                     self.cantina_orders[order_id]["status"] = "completed"
@@ -2695,7 +2532,7 @@ _••••••••••••••••••_
                     
             except Exception as e:
                 logger.error(f"Ошибка в callback: {e}")
-                self.bot.answer_callback_query(call.id, "🙅‍♂️ *Ой-ой, что-то пошло не так!*")
+                self.bot.answer_callback_query(call.id, "❌ Ошибка!")
 
     def run(self):
         logger.info("🤖 Чиби-бот запущен!")
