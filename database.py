@@ -39,10 +39,13 @@ def get_users_collection():
     return db.get_collection('users')
 
 def get_chibis_collection():
-    return db.get_collection('chibis')
+    return db.get_collection('user_chibis')
 
 def get_orders_collection():
     return db.get_collection('orders')
 
 def get_tasks_collection():
     return db.get_collection('tasks')
+
+def get_system_collection():
+    return db.get_collection('system')
