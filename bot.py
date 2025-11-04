@@ -8,7 +8,6 @@ import threading
 import time
 from flask import Flask
 from datetime import datetime, timedelta
-import pytz
 
 from config import BOT_CONFIG, BOT_TEXTS
 
@@ -37,142 +36,127 @@ class ChibiBot:
         self.next_order_id = 1
         self.message_owners = {}
         
-        # Система КД и банов
-        self.last_chibi_used = {}
-        self.last_task_used = {}
-        self.last_task_status = {}
-        self.last_bonus_used = {}
-        self.banned_users = {}
+        # Система КД
+        self.last_chibi_time = {}
+        self.last_task_time = {}
+        self.last_task_type = {}  # 'completed' или 'skipped'
+        self.last_bonus_time = {}
+        self.banned_users = {}  # {user_id: ban_end_time}
         
         # Тестовые аккаунты
-        self.admin_users = ['tmkazavr', 'ya_admin7']
+        self.test_users = ['tmkazavr', 'ya_admin7']
         
-    def is_admin(self, user):
-        return user.username in self.admin_users if user.username else False
-    
+    def is_test_user(self, username):
+        return username in self.test_users if username else False
+        
     def is_banned(self, user_id):
         user_id_str = str(user_id)
         if user_id_str in self.banned_users:
-            ban_data = self.banned_users[user_id_str]
-            if datetime.now() < ban_data['until']:
+            if datetime.now() < self.banned_users[user_id_str]:
                 return True
             else:
-                # Бан истек, удаляем и сбрасываем аккаунт
-                self.reset_user_account(user_id_str)
+                # Бан истек, очищаем аккаунт
+                self.clear_user_data(user_id_str)
                 del self.banned_users[user_id_str]
         return False
-    
-    def reset_user_account(self, user_id_str):
-        """Полный сброс аккаунта пользователя"""
+        
+    def clear_user_data(self, user_id_str):
         if user_id_str in self.users:
-            # Сохраняем только сам факт регистрации
-            user_data = self.users[user_id_str]
-            self.users[user_id_str] = {
-                'user_id': user_data['user_id'],
-                'first_name': user_data['first_name'],
-                'username': user_data['username'],
-                'registration_date': user_data['registration_date'],
-                'last_active': datetime.now(),
-                'banned_until': None
-            }
-        
-        # Сбрасываем все прогрессы
-        self.user_chibis[user_id_str] = []
-        self.user_items[user_id_str] = {"🧧 Чиби-пак": 1}
-        self.user_coins[user_id_str] = 0
-        self.user_levels[user_id_str] = 1
-        self.user_exp[user_id_str] = 0
-        self.user_tasks[user_id_str] = None
-        self.last_chibi_used[user_id_str] = None
-        self.last_task_used[user_id_str] = None
-        self.last_task_status[user_id_str] = None
-    
-    def format_time_remaining(self, seconds):
-        """Форматирует время в формат 1ч 11м"""
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        if hours > 0 and minutes > 0:
-            return f"{hours}ч {minutes}м"
-        elif hours > 0:
-            return f"{hours}ч"
-        else:
-            return f"{minutes}м"
-    
-    def get_chibi_cooldown_remaining(self, user_id):
-        """Получает оставшееся время КД для чибиков"""
-        user_id_str = str(user_id)
-        if user_id_str not in self.last_chibi_used:
-            return 0
-        
-        last_used = self.last_chibi_used[user_id_str]
-        if not last_used:
-            return 0
+            del self.users[user_id_str]
+        if user_id_str in self.user_chibis:
+            del self.user_chibis[user_id_str]
+        if user_id_str in self.user_items:
+            del self.user_items[user_id_str]
+        if user_id_str in self.user_tasks:
+            del self.user_tasks[user_id_str]
+        if user_id_str in self.user_coins:
+            del self.user_coins[user_id_str]
+        if user_id_str in self.user_levels:
+            del self.user_levels[user_id_str]
+        if user_id_str in self.user_exp:
+            del self.user_exp[user_id_str]
+        if user_id_str in self.user_chibi_timestamps:
+            del self.user_chibi_timestamps[user_id_str]
+        if user_id_str in self.last_chibi_time:
+            del self.last_chibi_time[user_id_str]
+        if user_id_str in self.last_task_time:
+            del self.last_task_time[user_id_str]
+        if user_id_str in self.last_task_type:
+            del self.last_task_type[user_id_str]
+        if user_id_str in self.last_bonus_time:
+            del self.last_bonus_time[user_id_str]
             
-        cooldown = 3 * 3600  # 3 часа в секундах
-        elapsed = (datetime.now() - last_used).total_seconds()
-        remaining = cooldown - elapsed
-        
-        return max(0, remaining)
-    
-    def get_task_cooldown_remaining(self, user_id):
-        """Получает оставшееся время КД для заданий"""
+    def ban_user(self, user_id, duration_days=7):
         user_id_str = str(user_id)
-        if user_id_str not in self.last_task_used:
-            return 0
+        self.banned_users[user_id_str] = datetime.now() + timedelta(days=duration_days)
         
-        last_used = self.last_task_used[user_id_str]
-        if not last_used:
-            return 0
-        
-        # Определяем КД в зависимости от статуса последнего задания
-        status = self.last_task_status.get(user_id_str)
-        if status == 'completed':
-            cooldown = 4 * 3600  # 4 часа
-        elif status == 'skipped':
-            cooldown = 5.5 * 3600  # 5.5 часов
-        else:
-            cooldown = 4 * 3600  # по умолчанию
+    def unban_user(self, user_id):
+        user_id_str = str(user_id)
+        if user_id_str in self.banned_users:
+            del self.banned_users[user_id_str]
             
-        elapsed = (datetime.now() - last_used).total_seconds()
-        remaining = cooldown - elapsed
-        
-        return max(0, remaining)
-    
-    def get_bonus_cooldown_remaining(self, user_id):
-        """Получает оставшееся время до сброса ежедневного бонуса (до 00:00 МСК)"""
-        msk_tz = pytz.timezone('Europe/Moscow')
-        now_msk = datetime.now(msk_tz)
-        tomorrow_msk = now_msk + timedelta(days=1)
-        next_reset_msk = msk_tz.localize(datetime(
-            tomorrow_msk.year, tomorrow_msk.month, tomorrow_msk.day, 0, 0, 0
-        ))
-        
-        remaining = (next_reset_msk - now_msk).total_seconds()
-        return max(0, remaining)
-    
-    def can_use_chibi(self, user_id):
-        """Проверяет, может ли пользователь использовать команду /chibi"""
-        if self.is_admin(user_id):
-            return True, 0
-        remaining = self.get_chibi_cooldown_remaining(user_id)
-        return remaining == 0, remaining
-    
-    def can_use_task(self, user_id):
-        """Проверяет, может ли пользователь использовать команду /task"""
-        if self.is_admin(user_id):
-            return True, 0
-        remaining = self.get_task_cooldown_remaining(user_id)
-        return remaining == 0, remaining
-    
-    def can_use_bonus(self, user_id):
-        """Проверяет, может ли пользователь использовать ежедневный бонус"""
+    def get_ban_time_left(self, user_id):
         user_id_str = str(user_id)
-        if user_id_str not in self.last_bonus_used:
-            return True, 0
+        if user_id_str in self.banned_users:
+            time_left = self.banned_users[user_id_str] - datetime.now()
+            return max(1, time_left.days)
+        return 0
         
-        remaining = self.get_bonus_cooldown_remaining(user_id)
-        return remaining == 0, remaining
-    
+    def format_time(self, seconds):
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours}ч {minutes:02d}м"
+        
+    def check_chibi_cooldown(self, user_id):
+        user_id_str = str(user_id)
+        if self.is_test_user(self.users.get(user_id_str, {}).get('username')):
+            return None
+            
+        if user_id_str in self.last_chibi_time:
+            time_passed = (datetime.now() - self.last_chibi_time[user_id_str]).total_seconds()
+            if time_passed < 3 * 3600:  # 3 часа
+                return 3 * 3600 - time_passed
+        return None
+        
+    def check_task_cooldown(self, user_id):
+        user_id_str = str(user_id)
+        if self.is_test_user(self.users.get(user_id_str, {}).get('username')):
+            return None
+            
+        if user_id_str in self.last_task_time:
+            time_passed = (datetime.now() - self.last_task_time[user_id_str]).total_seconds()
+            task_type = self.last_task_type.get(user_id_str, 'completed')
+            
+            if task_type == 'completed':
+                cooldown = 4 * 3600  # 4 часа
+            else:  # skipped
+                cooldown = 5.5 * 3600  # 5.5 часов
+                
+            if time_passed < cooldown:
+                return cooldown - time_passed
+        return None
+        
+    def check_bonus_cooldown(self, user_id):
+        user_id_str = str(user_id)
+        if self.is_test_user(self.users.get(user_id_str, {}).get('username')):
+            return None
+            
+        if user_id_str in self.last_bonus_time:
+            now = datetime.now()
+            last_bonus = self.last_bonus_time[user_id_str]
+            
+            # Проверяем, наступила ли полночь по Москве
+            moscow_time = now + timedelta(hours=3)  # UTC+3
+            last_bonus_moscow = last_bonus + timedelta(hours=3)
+            
+            # Если сегодня уже брали бонус
+            if last_bonus_moscow.date() == moscow_time.date():
+                # Считаем время до следующей полночи
+                next_midnight = datetime(moscow_time.year, moscow_time.month, moscow_time.day) + timedelta(days=1)
+                time_left = next_midnight - moscow_time
+                return time_left.total_seconds()
+        return None
+        
     def generate_unique_user_id(self):
         attempts = 0
         while attempts < 100:
@@ -189,6 +173,9 @@ class ChibiBot:
     def get_or_create_user(self, telegram_id, first_name=None, username=None):
         telegram_id_str = str(telegram_id)
         
+        if self.is_banned(telegram_id):
+            return None, False
+            
         if telegram_id_str in self.users:
             self.users[telegram_id_str]['last_active'] = datetime.now()
             return self.users[telegram_id_str], False
@@ -202,11 +189,21 @@ class ChibiBot:
                 'last_active': datetime.now()
             }
             self.users[telegram_id_str] = user_data
-            self.user_chibis[telegram_id_str] = []
-            self.user_items[telegram_id_str] = {"🧧 Чиби-пак": 1}
-            self.user_coins[telegram_id_str] = 0
-            self.user_levels[telegram_id_str] = 1
-            self.user_exp[telegram_id_str] = 0
+            
+            # Для тестовых пользователей даем особые условия
+            if self.is_test_user(username):
+                self.user_chibis[telegram_id_str] = ['Test Chibi 1', 'Test Chibi 2'] * 10
+                self.user_items[telegram_id_str] = {"🧧 Чиби-пак": 999}
+                self.user_coins[telegram_id_str] = 999999
+                self.user_levels[telegram_id_str] = 50
+                self.user_exp[telegram_id_str] = 0
+            else:
+                self.user_chibis[telegram_id_str] = []
+                self.user_items[telegram_id_str] = {"🧧 Чиби-пак": 1}
+                self.user_coins[telegram_id_str] = 0
+                self.user_levels[telegram_id_str] = 1
+                self.user_exp[telegram_id_str] = 0
+                
             self.user_chibi_timestamps[telegram_id_str] = {}
             logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
@@ -215,7 +212,7 @@ class ChibiBot:
         return str(user_id) in self.users
 
     def send_start_suggestion(self, chat_id, message_id=None):
-        text = "⭐️ Советую сначала запустить бота"
+        text = "⭐️ *Советую сначала запустить бота*"
         markup = types.InlineKeyboardMarkup()
         btn_start = types.InlineKeyboardButton("Запуск", url=f"https://t.me/{self.bot.get_me().username}?start=start")
         markup.add(btn_start)
@@ -229,19 +226,17 @@ class ChibiBot:
             self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
 
     def get_required_exp(self, level):
-        # Новая система опыта для быстрого прогресса до 10 уровня
-        if level < 3:
-            return level * 30  # 30, 60
-        elif level < 7:
-            return 90 + (level - 2) * 40  # 130, 170, 210, 250
-        elif level < 11:
-            return 250 + (level - 6) * 60  # 310, 370, 430, 490
-        elif level < 15:
-            return 490 + (level - 10) * 80
+        # Сбалансированная система опыта для умеренного прогресса
+        if level < 5:
+            return level * 80  # Быстрый старт
+        elif level < 10:
+            return 400 + (level - 4) * 120  # Умеренный рост
         elif level < 20:
-            return 810 + (level - 14) * 100
+            return 1120 + (level - 9) * 180  # Медленный рост
+        elif level < 30:
+            return 2920 + (level - 19) * 250  # Замедление
         else:
-            return 1310 + (level - 19) * 150
+            return 5420 + (level - 29) * 350  # Медленный прогресс
 
     def add_exp(self, telegram_id, exp_amount):
         telegram_id_str = str(telegram_id)
@@ -302,24 +297,24 @@ class ChibiBot:
             pass
         
         if unlocked_feature:
-            level_text = f"""Эй, {user_name}!
+            level_text = f"""*Эй, {user_name}!*
 Ты только что апнул новый уровень! Поздравляю!
 •••••••••••••••••••
-Уровень {old_level} —> Уровень {new_level}
+*Уровень {old_level} --> Уровень {new_level}*
 •••••••••••••••••••
 Теперь доступно: 
-  - {unlocked_feature}
+  - *{unlocked_feature}*
 •••••••••••••••••••
 И чтобы ты не расслаблялся, держи небольшой подгон:
-+ 🧧 1 Чиби-пак"""
++ *🧧 1* Чиби-пак"""
         else:
-            level_text = f"""Эй, {user_name}!
+            level_text = f"""*Эй, {user_name}!*
 Ты только что апнул новый уровень! Поздравляю!
 •••••••••••••••••••
-Уровень {old_level} —> Уровень {new_level}
+*Уровень {old_level} --> Уровень {new_level}*
 •••••••••••••••••••
 И чтобы ты не расслаблялся, держи небольшой подгон:
-+ 🧧 1 Чиби-пак"""
++ *🧧 1* Чиби-пак"""
         
         try:
             sent_message = self.bot.send_message(telegram_id, level_text, parse_mode='Markdown')
@@ -442,8 +437,8 @@ class ChibiBot:
         button_text = "✅ Сдать задание (1/1)" if has_chibi else "Сдать задание (0/1)"
         
         task_text = f"""*{task_data['emoji']} {task_data['name']}*
-_{task_data['phrase']}_
-`•••••••••••••••••••`
+{task_data['phrase']}
+•••••••••••••••••••
 Дам *💰 {task_data['reward']}* за {task_data['chibi']}"""
         
         return task_text, button_text, has_chibi
@@ -572,7 +567,7 @@ _{task_data['phrase']}_
         
         if message_key in self.message_owners:
             if self.message_owners[message_key] != telegram_id_str:
-                self.bot.answer_callback_query(call.id, "🙈 Не твое!", parse_mode='Markdown')
+                self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
                 return False
         return True
 
@@ -582,35 +577,26 @@ _{task_data['phrase']}_
             if message.chat.type != 'private':
                 return
                 
-            # Проверка бана
-            if self.is_banned(message.from_user.id):
-                ban_data = self.banned_users[str(message.from_user.id)]
-                days_left = (ban_data['until'] - datetime.now()).days
-                if days_left <= 0:
-                    days_left = 1
-                sent_message = self.bot.send_message(
-                    message.chat.id, 
-                    f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
-                    parse_mode='Markdown'
-                )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                return
-                
             try:
+                if self.is_banned(message.from_user.id):
+                    days_left = self.get_ban_time_left(message.from_user.id)
+                    sent_message = self.bot.send_message(
+                        message.chat.id,
+                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                        parse_mode='Markdown'
+                    )
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    return
+                    
                 user_data, is_new_user = self.get_or_create_user(
                     message.from_user.id,
                     message.from_user.first_name,
                     message.from_user.username
                 )
                 
-                # Для тестовых аккаунтов устанавливаем особые условия
-                if self.is_admin(message.from_user):
-                    telegram_id_str = str(message.from_user.id)
-                    self.user_coins[telegram_id_str] = 999999
-                    # Добавляем все чибики
-                    all_chibis = self.get_all_common_chibis()
-                    self.user_chibis[telegram_id_str] = all_chibis * 10  # По 10 каждого
-                
+                if user_data is None:
+                    return
+                    
                 user_name = message.from_user.first_name or "путешественник"
                 
                 if is_new_user:
@@ -637,98 +623,104 @@ _{task_data['phrase']}_
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
                 sent_message = self.bot.send_message(
-                    message.chat.id, 
-                    "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                    message.chat.id,
+                    "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                    reply_markup=types.InlineKeyboardMarkup().add(
+                        types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                    ),
                     parse_mode='Markdown'
                 )
                 self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
 
         @self.bot.message_handler(commands=['ban'])
         def ban_handler(message):
-            # Проверяем права админа
-            if not self.is_admin(message.from_user):
-                return
-                
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
+                telegram_id_str = str(message.from_user.id)
+                user_data = self.users.get(telegram_id_str, {})
+                
+                if not self.is_test_user(user_data.get('username')):
+                    self.bot.reply_to(message, "❌ *Недостаточно прав!*", parse_mode='Markdown')
+                    return
+                    
                 if len(message.text.split()) < 2:
-                    self.bot.reply_to(message, "Использование: /ban @username или /ban user_id")
+                    self.bot.reply_to(message, "🤷‍♂️ *Использование:* `/ban @username`", parse_mode='Markdown')
                     return
-                
+                    
                 target = message.text.split()[1].strip()
-                
-                # Ищем пользователя
                 target_user_id = None
-                for telegram_id_str, user_data in self.users.items():
-                    if (user_data.get('username') == target.replace('@', '') or 
-                        user_data.get('user_id') == target):
-                        target_user_id = telegram_id_str
+                
+                # Ищем пользователя по username или ID
+                for user_id, user_info in self.users.items():
+                    if user_info.get('username') == target.replace('@', '') or user_info.get('user_id') == target:
+                        target_user_id = user_id
                         break
-                
+                        
                 if not target_user_id:
-                    self.bot.reply_to(message, "Пользователь не найден")
+                    self.bot.reply_to(message, "👻 *Пользователь не найден!*", parse_mode='Markdown')
                     return
-                
-                # Баним на 7 дней
-                ban_until = datetime.now() + timedelta(days=7)
-                self.banned_users[target_user_id] = {
-                    'until': ban_until,
-                    'banned_by': message.from_user.id
-                }
-                
-                self.bot.reply_to(message, f"Пользователь забанен на 7 дней. ID: {target_user_id}")
+                    
+                self.ban_user(target_user_id)
+                self.bot.reply_to(message, f"✅ *Пользователь забанен на 7 дней!*", parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка бана: {e}")
-                self.bot.reply_to(message, "Ошибка при бане пользователя")
+                self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['unban'])
         def unban_handler(message):
-            # Проверяем права админа
-            if not self.is_admin(message.from_user):
-                return
-                
             try:
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
+                telegram_id_str = str(message.from_user.id)
+                user_data = self.users.get(telegram_id_str, {})
+                
+                if not self.is_test_user(user_data.get('username')):
+                    self.bot.reply_to(message, "❌ *Недостаточно прав!*", parse_mode='Markdown')
+                    return
+                    
                 if len(message.text.split()) < 2:
-                    self.bot.reply_to(message, "Использование: /unban @username или /unban user_id")
+                    self.bot.reply_to(message, "🤷‍♂️ *Использование:* `/unban @username`", parse_mode='Markdown')
                     return
-                
+                    
                 target = message.text.split()[1].strip()
-                
-                # Ищем пользователя
                 target_user_id = None
-                for telegram_id_str, user_data in self.users.items():
-                    if (user_data.get('username') == target.replace('@', '') or 
-                        user_data.get('user_id') == target):
-                        target_user_id = telegram_id_str
+                
+                for user_id, user_info in self.users.items():
+                    if user_info.get('username') == target.replace('@', '') or user_info.get('user_id') == target:
+                        target_user_id = user_id
                         break
-                
-                if not target_user_id or target_user_id not in self.banned_users:
-                    self.bot.reply_to(message, "Пользователь не найден или не в бане")
+                        
+                if not target_user_id:
+                    self.bot.reply_to(message, "👻 *Пользователь не найден!*", parse_mode='Markdown')
                     return
-                
-                # Разбаниваем
-                del self.banned_users[target_user_id]
-                self.bot.reply_to(message, f"Пользователь разбанен. ID: {target_user_id}")
+                    
+                self.unban_user(target_user_id)
+                self.bot.reply_to(message, f"✅ *Пользователь разбанен!*", parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка разбана: {e}")
-                self.bot.reply_to(message, "Ошибка при разбане пользователя")
+                self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['myid'])
         def myid_handler(message):
             try:
-                # Проверка бана
                 if self.is_banned(message.from_user.id):
-                    ban_data = self.banned_users[str(message.from_user.id)]
-                    days_left = (ban_data['until'] - datetime.now()).days
-                    if days_left <= 0:
-                        days_left = 1
-                    sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    days_left = self.get_ban_time_left(message.from_user.id)
+                    if message.chat.type == 'private':
+                        sent_message = self.bot.send_message(
+                            message.chat.id,
+                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    else:
+                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
                     
                 if not self.check_user_started(message.from_user.id):
@@ -749,8 +741,11 @@ _{task_data['phrase']}_
                 logger.error(f"Ошибка: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                        message.chat.id,
+                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                        reply_markup=types.InlineKeyboardMarkup().add(
+                            types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                        ),
                         parse_mode='Markdown'
                     )
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -760,18 +755,17 @@ _{task_data['phrase']}_
         @self.bot.message_handler(commands=['balance'])
         def balance_handler(message):
             try:
-                # Проверка бана
                 if self.is_banned(message.from_user.id):
-                    ban_data = self.banned_users[str(message.from_user.id)]
-                    days_left = (ban_data['until'] - datetime.now()).days
-                    if days_left <= 0:
-                        days_left = 1
-                    sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    days_left = self.get_ban_time_left(message.from_user.id)
+                    if message.chat.type == 'private':
+                        sent_message = self.bot.send_message(
+                            message.chat.id,
+                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    else:
+                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
                     
                 if not self.check_user_started(message.from_user.id):
@@ -792,8 +786,11 @@ _{task_data['phrase']}_
                 logger.error(f"Ошибка: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                        message.chat.id,
+                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                        reply_markup=types.InlineKeyboardMarkup().add(
+                            types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                        ),
                         parse_mode='Markdown'
                     )
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -803,18 +800,17 @@ _{task_data['phrase']}_
         @self.bot.message_handler(commands=['level'])
         def level_handler(message):
             try:
-                # Проверка бана
                 if self.is_banned(message.from_user.id):
-                    ban_data = self.banned_users[str(message.from_user.id)]
-                    days_left = (ban_data['until'] - datetime.now()).days
-                    if days_left <= 0:
-                        days_left = 1
-                    sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    days_left = self.get_ban_time_left(message.from_user.id)
+                    if message.chat.type == 'private':
+                        sent_message = self.bot.send_message(
+                            message.chat.id,
+                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    else:
+                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
                     
                 if not self.check_user_started(message.from_user.id):
@@ -823,7 +819,7 @@ _{task_data['phrase']}_
                     
                 level, current_exp, required_exp, percentage = self.get_level_progress(message.from_user.id)
                 
-                level_text = f"💫 *Твой уровень* — *{level}* ({percentage}%)"
+                level_text = f"""💫 *Твой уровень* — *{level}* ({percentage}%)"""
                 
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(message.chat.id, level_text, parse_mode='Markdown')
@@ -835,8 +831,11 @@ _{task_data['phrase']}_
                 logger.error(f"Ошибка: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                        message.chat.id,
+                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                        reply_markup=types.InlineKeyboardMarkup().add(
+                            types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                        ),
                         parse_mode='Markdown'
                     )
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -846,18 +845,17 @@ _{task_data['phrase']}_
         @self.bot.message_handler(commands=['mart'])
         def mart_handler(message):
             try:
-                # Проверка бана
                 if self.is_banned(message.from_user.id):
-                    ban_data = self.banned_users[str(message.from_user.id)]
-                    days_left = (ban_data['until'] - datetime.now()).days
-                    if days_left <= 0:
-                        days_left = 1
-                    sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    days_left = self.get_ban_time_left(message.from_user.id)
+                    if message.chat.type == 'private':
+                        sent_message = self.bot.send_message(
+                            message.chat.id,
+                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    else:
+                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
                     
                 if not self.check_user_started(message.from_user.id):
@@ -865,7 +863,7 @@ _{task_data['phrase']}_
                     return
                     
                 mart_text = """🎏 *Лавка джавы*
-_Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!_"""
+Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!"""
                 
                 markup = types.InlineKeyboardMarkup()
                 btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
@@ -887,8 +885,11 @@ _Джавы, может, и не отличаются умом, но зато т
                 logger.error(f"Ошибка при открытии лавки: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                        message.chat.id,
+                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                        reply_markup=types.InlineKeyboardMarkup().add(
+                            types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                        ),
                         parse_mode='Markdown'
                     )
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -898,34 +899,36 @@ _Джавы, может, и не отличаются умом, но зато т
         @self.bot.message_handler(commands=['chibi'])
         def chibi_handler(message):
             try:
-                # Проверка бана
                 if self.is_banned(message.from_user.id):
-                    ban_data = self.banned_users[str(message.from_user.id)]
-                    days_left = (ban_data['until'] - datetime.now()).days
-                    if days_left <= 0:
-                        days_left = 1
-                    sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    days_left = self.get_ban_time_left(message.from_user.id)
+                    if message.chat.type == 'private':
+                        sent_message = self.bot.send_message(
+                            message.chat.id,
+                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    else:
+                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
                     
                 if not self.check_user_started(message.from_user.id):
                     self.send_start_suggestion(message.chat.id)
                     return
-                
-                # Проверка КД
-                can_use, remaining = self.can_use_chibi(message.from_user)
-                if not can_use:
-                    time_str = self.format_time_remaining(remaining)
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        f"⚡️ *Ты уже залутал чибика в последнее время!* \n_Возвращайся за новеньким-готовеньким через_ *{time_str}*!_",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    
+                # Проверяем КД
+                cooldown = self.check_chibi_cooldown(message.from_user.id)
+                if cooldown:
+                    time_left = self.format_time(int(cooldown))
+                    if message.chat.type == 'private':
+                        sent_message = self.bot.send_message(
+                            message.chat.id,
+                            f"⚡️ *Ты уже залутал чибика в последнее время!* Возвращайся за новеньким-готовеньким через *{time_left}*!",
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    else:
+                        self.bot.reply_to(message, f"⚡️ *Ты уже залутал чибика в последнее время!* Возвращайся за новеньким-готовеньким через *{time_left}*!", parse_mode='Markdown')
                     return
                     
                 telegram_id_str = str(message.from_user.id)
@@ -939,9 +942,6 @@ _Джавы, может, и не отличаются умом, но зато т
                         self.bot.reply_to(message, "🌀 *Чибики сейчас отдыхают!* Загляни позже", parse_mode='Markdown')
                     return
                 
-                # Обновляем время использования
-                self.last_chibi_used[telegram_id_str] = datetime.now()
-                
                 active_hunt_order_id = self.user_active_hunts.get(telegram_id_str)
                 hunt_chibi_needed = None
                 hunt_start_time = None
@@ -952,15 +952,18 @@ _Джавы, может, и не отличаются умом, но зато т
                 self.add_chibi_to_user(message.from_user.id, chibi_name)
                 chibi_count = self.get_chibi_count(message.from_user.id, chibi_name)
                 
-                # Увеличиваем опыт за чибика для быстрого прогресса
-                exp_gained = random.randint(35, 45)
+                # Начисляем опыт за чибика (сбалансированно)
+                exp_gained = random.randint(15, 25)
                 level_ups, new_level = self.add_exp(message.from_user.id, exp_gained)
+                
+                # Обновляем время получения чибика
+                self.last_chibi_time[telegram_id_str] = datetime.now()
                 
                 rarity_emoji = "🔷" if rarity == "Common" else "🔶"
                 
                 if hunt_chibi_needed and chibi_name == hunt_chibi_needed:
                     chibi_text = f"""*Тебе выпал — {chibi_name}!*
-_Этот чибик нужен тебе, чтобы выполнить заказ в кантине! Скорее сдай его, пока конкуренты тебя не опередили_
+Этот чибик нужен тебе, чтобы выполнить заказ в кантине! Скорее сдай его, пока конкуренты тебя не опередили
 •••••••••••••••••••
 Редкость: {rarity_emoji} {rarity}
 У тебя: *{chibi_count}*
@@ -968,8 +971,8 @@ _Этот чибик нужен тебе, чтобы выполнить зака
 + ⭐️ *{exp_gained}* опыта"""
                 else:
                     chibi_text = f"""*Тебе выпал — {chibi_name}!*
-_Надеюсь, он тебе понравился! 
-_Приходи еще через_ *2ч 59м*
+Надеюсь, он тебе понравился! 
+Приходи еще через *2ч 59м*
 •••••••••••••••••••
 Редкость: {rarity_emoji} {rarity}
 У тебя: {chibi_count}
@@ -1004,8 +1007,11 @@ _Приходи еще через_ *2ч 59м*
                 logger.error(f"Ошибка при отправке чиби: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                        message.chat.id,
+                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                        reply_markup=types.InlineKeyboardMarkup().add(
+                            types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                        ),
                         parse_mode='Markdown'
                     )
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -1015,40 +1021,33 @@ _Приходи еще через_ *2ч 59м*
         @self.bot.message_handler(commands=['task'])
         def task_handler(message):
             try:
-                # Проверка бана
                 if self.is_banned(message.from_user.id):
-                    ban_data = self.banned_users[str(message.from_user.id)]
-                    days_left = (ban_data['until'] - datetime.now()).days
-                    if days_left <= 0:
-                        days_left = 1
-                    sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    days_left = self.get_ban_time_left(message.from_user.id)
+                    if message.chat.type == 'private':
+                        sent_message = self.bot.send_message(
+                            message.chat.id,
+                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    else:
+                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
                     
                 if not self.check_user_started(message.from_user.id):
                     self.send_start_suggestion(message.chat.id)
                     return
-                
-                # Проверка КД
-                can_use, remaining = self.can_use_task(message.from_user)
-                if not can_use:
-                    telegram_id_str = str(message.from_user.id)
-                    last_status = self.last_task_status.get(telegram_id_str, 'completed')
                     
-                    if last_status == 'completed':
-                        task_data = self.user_tasks.get(telegram_id_str)
-                        emoji = task_data['emoji'] if task_data else '🎯'
-                        time_str = self.format_time_remaining(remaining)
-                        text = f"{emoji} *Ты выполнил свой таск недавно. _Думаю, стоит взять перерыв! Осталось подождать_ *{time_str}*"
-                    else:  # skipped
-                        task_data = self.user_tasks.get(telegram_id_str)
-                        emoji = task_data['emoji'] if task_data else '🎯'
-                        time_str = self.format_time_remaining(remaining)
-                        text = f"{emoji} *Ты пропустил свой таск, поэтому придется ждать дольше*. _Приходи через_ *{time_str}*"
+                # Проверяем КД задания
+                cooldown = self.check_task_cooldown(message.from_user.id)
+                if cooldown:
+                    time_left = self.format_time(int(cooldown))
+                    task_type = self.last_task_type.get(str(message.from_user.id), 'completed')
+                    
+                    if task_type == 'completed':
+                        text = f"{self.user_tasks.get(str(message.from_user.id), {}).get('emoji', '🎯')} *Ты выполнил свой таск недавно. Думаю, стоит взять перерыв! Осталось подождать* *{time_left}*"
+                    else:
+                        text = f"{self.user_tasks.get(str(message.from_user.id), {}).get('emoji', '🎯')} *Ты пропустил свой таск, поэтому придется ждать дольше*. Приходи через *{time_left}*"
                     
                     if message.chat.type == 'private':
                         sent_message = self.bot.send_message(message.chat.id, text, parse_mode='Markdown')
@@ -1087,8 +1086,11 @@ _Приходи еще через_ *2ч 59м*
                 logger.error(f"Ошибка при генерации задания: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                        message.chat.id,
+                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                        reply_markup=types.InlineKeyboardMarkup().add(
+                            types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                        ),
                         parse_mode='Markdown'
                     )
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -1098,18 +1100,17 @@ _Приходи еще через_ *2ч 59м*
         @self.bot.message_handler(commands=['menu'])
         def menu_handler(message):
             try:
-                # Проверка бана
                 if self.is_banned(message.from_user.id):
-                    ban_data = self.banned_users[str(message.from_user.id)]
-                    days_left = (ban_data['until'] - datetime.now()).days
-                    if days_left <= 0:
-                        days_left = 1
-                    sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    days_left = self.get_ban_time_left(message.from_user.id)
+                    if message.chat.type == 'private':
+                        sent_message = self.bot.send_message(
+                            message.chat.id,
+                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    else:
+                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
                     
                 if not self.check_user_started(message.from_user.id):
@@ -1117,19 +1118,19 @@ _Приходи еще через_ *2ч 59м*
                     return
                     
                 menu_text = """*✨ Меню* 
-_Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались_"""
+Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались"""
                 
                 markup = types.InlineKeyboardMarkup(row_width=2)
                 btn_warehouse = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
                 btn_channel = types.InlineKeyboardButton("Наш тгк", url=BOT_CONFIG['telegram_channel'])
                 
-                # Проверяем доступность бонуса
-                can_use_bonus, remaining = self.can_use_bonus(message.from_user)
-                if can_use_bonus:
-                    btn_bonus = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
+                # Проверяем КД бонуса
+                bonus_cooldown = self.check_bonus_cooldown(message.from_user.id)
+                if bonus_cooldown:
+                    time_left = self.format_time(int(bonus_cooldown))
+                    btn_bonus = types.InlineKeyboardButton(f"🔒 Приходи через {time_left}", callback_data="bonus_cooldown")
                 else:
-                    time_str = self.format_time_remaining(remaining)
-                    btn_bonus = types.InlineKeyboardButton(f"🔒 Приходи через {time_str}", callback_data="bonus_cooldown")
+                    btn_bonus = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
                 
                 markup.add(btn_warehouse, btn_channel)
                 markup.add(btn_bonus)
@@ -1150,8 +1151,11 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 logger.error(f"Ошибка при открытии меню: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                        message.chat.id,
+                        "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                        reply_markup=types.InlineKeyboardMarkup().add(
+                            types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                        ),
                         parse_mode='Markdown'
                     )
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -1165,15 +1169,11 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                 return
                 
             try:
-                # Проверка бана
                 if self.is_banned(message.from_user.id):
-                    ban_data = self.banned_users[str(message.from_user.id)]
-                    days_left = (ban_data['until'] - datetime.now()).days
-                    if days_left <= 0:
-                        days_left = 1
+                    days_left = self.get_ban_time_left(message.from_user.id)
                     sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
+                        message.chat.id,
+                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                         parse_mode='Markdown'
                     )
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -1245,7 +1245,7 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     return
                 
                 gift_text = f"""✨ *О, да ты у нас щедрый!*
-_Выбери, какого чибика подаришь_"""
+Выбери, какого чибика подаришь"""
                 
                 markup = types.InlineKeyboardMarkup()
                 
@@ -1278,8 +1278,11 @@ _Выбери, какого чибика подаришь_"""
             except Exception as e:
                 logger.error(f"Ошибка при отправке подарка: {e}")
                 sent_message = self.bot.send_message(
-                    message.chat.id, 
-                    "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                    message.chat.id,
+                    "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                    reply_markup=types.InlineKeyboardMarkup().add(
+                        types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                    ),
                     parse_mode='Markdown'
                 )
                 self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -1291,15 +1294,11 @@ _Выбери, какого чибика подаришь_"""
                 return
                 
             try:
-                # Проверка бана
                 if self.is_banned(message.from_user.id):
-                    ban_data = self.banned_users[str(message.from_user.id)]
-                    days_left = (ban_data['until'] - datetime.now()).days
-                    if days_left <= 0:
-                        days_left = 1
+                    days_left = self.get_ban_time_left(message.from_user.id)
                     sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        f"🤡 *Ты в бане!* _Ты снова получишь доступ к боту через_ *{days_left}* _дней_.", 
+                        message.chat.id,
+                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                         parse_mode='Markdown'
                     )
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -1314,7 +1313,7 @@ _Выбери, какого чибика подаришь_"""
                 user_order_id, user_order_data = self.get_user_active_order(message.from_user.id)
                 
                 cantina_text = """*🕍 Кантина*
-_Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…_"""
+Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…"""
                 
                 markup = types.InlineKeyboardMarkup()
                 
@@ -1369,8 +1368,11 @@ _Отличное место! Сборище наемников. Здесь мо
             except Exception as e:
                 logger.error(f"Ошибка при открытии кантины: {e}")
                 sent_message = self.bot.send_message(
-                    message.chat.id, 
-                    "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам", 
+                    message.chat.id,
+                    "⛓️‍💥* Потеряно соединение!* Попробуй снова! Очень маловероятно, что это *баг*, но если повторится, ты можешь сообщить нам",
+                    reply_markup=types.InlineKeyboardMarkup().add(
+                        types.InlineKeyboardButton("Сообщить админу", url="https://t.me/temkazavr")
+                    ),
                     parse_mode='Markdown'
                 )
                 self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -1414,7 +1416,7 @@ _Отличное место! Сборище наемников. Здесь мо
                         self.user_states[telegram_id_str] = None
                         
                         create_text = """🕍 *Создаем заказ*
-_Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию_"""
+Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию"""
                         
                         markup = types.InlineKeyboardMarkup()
                         
@@ -1469,11 +1471,6 @@ _Укажи, какого чибика охотники будут искать,
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
             try:
-                # Проверка бана
-                if self.is_banned(call.from_user.id):
-                    self.bot.answer_callback_query(call.id, "🤡 Ты в бане!")
-                    return
-
                 if not self.check_message_ownership(call):
                     return
 
@@ -1487,6 +1484,9 @@ _Укажи, какого чибика охотники будут искать,
                     
                     if telegram_id_str in self.user_chibis and task_data["chibi"] in self.user_chibis[telegram_id_str]:
                         self.user_chibis[telegram_id_str].remove(task_data["chibi"])
+                    else:
+                        self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
+                        return
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
@@ -1498,18 +1498,18 @@ _Укажи, какого чибика охотники будут искать,
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
                     
-                    # Увеличиваем опыт за задание для быстрого прогресса
-                    exp_gained = random.randint(45, 55)
+                    # Начисляем опыт за задание (сбалансированно)
+                    exp_gained = random.randint(20, 30)
                     level_ups, new_level = self.add_exp(call.from_user.id, exp_gained)
                     
-                    # Обновляем КД
-                    self.last_task_used[telegram_id_str] = datetime.now()
-                    self.last_task_status[telegram_id_str] = 'completed'
+                    # Устанавливаем КД для заданий
+                    self.last_task_time[telegram_id_str] = datetime.now()
+                    self.last_task_type[telegram_id_str] = 'completed'
                     
                     user_nick = call.from_user.first_name or "путешественник"
                     complete_text = f"""*Ес! {user_nick}, ты выполнил таск!*
-_За это ты получаешь обещанную награду. Даже не буду гадать, сколько ты выбивал нужного чибика_
-`•••••••••••••••••••`
+За это ты получаешь обещанную награду. Даже не буду гадать, сколько ты выбивал нужного чибика
+•••••••••••••••••••
 + 💰*{reward}* коинов
 + ⭐️ *{exp_gained}* опыта"""
                     
@@ -1533,14 +1533,14 @@ _За это ты получаешь обещанную награду. Даже
                     telegram_id_str = str(call.from_user.id)
                     self.user_tasks[telegram_id_str] = None
                     
-                    # Обновляем КД
-                    self.last_task_used[telegram_id_str] = datetime.now()
-                    self.last_task_status[telegram_id_str] = 'skipped'
+                    # Устанавливаем КД для пропущенных заданий
+                    self.last_task_time[telegram_id_str] = datetime.now()
+                    self.last_task_type[telegram_id_str] = 'skipped'
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
                     skip_text = """✨*Ты пропустил таск. Жди новый!*
-_Осталось 5ч 29м_"""
+Осталось 5ч 29м"""
                     
                     sent_message = self.bot.send_message(
                         call.message.chat.id,
@@ -1558,7 +1558,7 @@ _Осталось 5ч 29м_"""
                     task_data = self.user_tasks[telegram_id_str]
                     
                     skip_text = f"""{task_data['emoji']}* Ты точно хочешь пропустить задание?*
-_Придется долго ждать следующее, но пропуск бесплатный_"""
+Придется долго ждать следующее, но пропуск бесплатный"""
                     
                     markup = types.InlineKeyboardMarkup()
                     btn_skip = types.InlineKeyboardButton("Пропустить", callback_data="task_skip")
@@ -1603,7 +1603,7 @@ _Придется долго ждать следующее, но пропуск 
                     
                 elif call.data == "menu_warehouse":
                     warehouse_text = """*📦 Перепутье*
-_Выбери, на какой раздел склада хочешь глянуть_"""
+Выбери, на какой раздел склада хочешь глянуть"""
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     btn_chibis = types.InlineKeyboardButton("Чибики", callback_data="warehouse_chibis_1")
@@ -1626,8 +1626,8 @@ _Выбери, на какой раздел склада хочешь гляну
                     chibis, current_page, total_pages = self.get_user_chibis_paginated(call.from_user.id, page)
                     
                     chibis_text = f"""📦 *Твои чибики*
-_Великолепные и неповторимые. Ну, почти…
-Страница {current_page}/{total_pages}_"""
+Великолепные и неповторимые. Ну, почти…
+Страница {current_page}/{total_pages}"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -1665,8 +1665,8 @@ _Великолепные и неповторимые. Ну, почти…
                     items, current_page, total_pages = self.get_user_items_paginated(call.from_user.id, page)
                     
                     items_text = f"""*📦 Твои предметы* 
-_Тут хранятся твои боксы. Других предметов в боте пока и нет…
-Страница {current_page}/{total_pages}_"""
+Тут хранятся твои боксы. Других предметов в боте пока и нет…
+Страница {current_page}/{total_pages}"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -1707,7 +1707,7 @@ _Тут хранятся твои боксы. Других предметов в
                     pack_count = self.user_items.get(telegram_id_str, {}).get("🧧 Чиби-пак", 0)
                     
                     confirm_text = f"""*Ты точно хочешь открыть 🧧 Чиби-пак?*
-_Хотя что тебе еще делать с ним? Разве что повесить на стену и любоваться_"""
+Хотя что тебе еще делать с ним? Разве что повесить на стену и любоваться"""
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     
@@ -1761,13 +1761,13 @@ _Хотя что тебе еще делать с ним? Разве что по�
                             
                             if hunt_chibi_needed and chibi_name == hunt_chibi_needed:
                                 chibi_text = f"""*Тебе выпал — {chibi_name}!*
-_Этот чибик нужен тебе, чтобы выполнить заказ в кантине! Скорее сдай его, пока конкуренты тебя не опередили_
+Этот чибик нужен тебе, чтобы выполнить заказ в кантине! Скорее сдай его, пока конкуренты тебя не опередили
 •••••••••••••••••••
 Редкость: {rarity_emoji} {rarity}
 У тебя: *{chibi_count}*"""
                             else:
                                 chibi_text = f"""*Тебе выпал — {chibi_name}!*
-_Надеюсь, он тебе понравился!_
+Надеюсь, он тебе понравился!
 •••••••••••••••••••
 Редкость: {rarity_emoji} {rarity}
 У тебя: {chibi_count}"""
@@ -1786,8 +1786,8 @@ _Надеюсь, он тебе понравился!_
                     items, current_page, total_pages = self.get_user_items_paginated(call.from_user.id, 1)
                     
                     items_text = f"""*📦 Твои предметы* 
-_Тут хранятся твои боксы. Других предметов в боте пока и нет…
-Страница {current_page}/{total_pages}_"""
+Тут хранятся твои боксы. Других предметов в боте пока и нет…
+Страница {current_page}/{total_pages}"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -1825,7 +1825,7 @@ _Тут хранятся твои боксы. Других предметов в
                     
                 elif call.data == "mart_chibi_pack":
                     pack_text = """🎏 *Хочешь купить этот прекрасный Чиби-пак?*
-_Да брось, знаю что так руки и чешутся!_"""
+Да брось, знаю что так руки и чешутся!"""
                     
                     markup = types.InlineKeyboardMarkup()
                     btn_buy = types.InlineKeyboardButton("Купить (120)", callback_data="buy_chibi_pack")
@@ -1845,14 +1845,12 @@ _Да брось, знаю что так руки и чешутся!_"""
                     telegram_id_str = str(call.from_user.id)
                     coins = self.user_coins.get(telegram_id_str, 0)
                     
-                    # Для тестовых аккаунтов пропускаем проверку баланса
-                    if not self.is_admin(call.from_user) and coins < 120:
+                    if coins < 120:
                         missing = 120 - coins
                         self.bot.answer_callback_query(call.id, f"✨ Бро, сначала подкопи! Тебе не хватает {missing} коинов")
                         return
                     
-                    if not self.is_admin(call.from_user):
-                        self.user_coins[telegram_id_str] = coins - 120
+                    self.user_coins[telegram_id_str] = coins - 120
                     
                     if telegram_id_str not in self.user_items:
                         self.user_items[telegram_id_str] = {}
@@ -1865,7 +1863,7 @@ _Да брось, знаю что так руки и чешутся!_"""
                     self.bot.answer_callback_query(call.id, "🎉 Чиби-пак куплен!")
                     
                     mart_text = """🎏 *Лавка джавы*
-_Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!_"""
+Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!"""
                     
                     markup = types.InlineKeyboardMarkup()
                     btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
@@ -1881,7 +1879,7 @@ _Джавы, может, и не отличаются умом, но зато т
                     
                 elif call.data == "mart_back":
                     mart_text = """🎏 *Лавка джавы*
-_Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!_"""
+Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!"""
                     
                     markup = types.InlineKeyboardMarkup()
                     btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
@@ -1898,10 +1896,11 @@ _Джавы, может, и не отличаются умом, но зато т
                 elif call.data == "menu_bonus":
                     telegram_id_str = str(call.from_user.id)
                     
-                    # Проверяем доступность бонуса
-                    can_use, remaining = self.can_use_bonus(call.from_user)
-                    if not can_use:
-                        self.bot.answer_callback_query(call.id, "Бонус еще не доступен")
+                    # Проверяем КД бонуса
+                    bonus_cooldown = self.check_bonus_cooldown(call.from_user.id)
+                    if bonus_cooldown and not self.is_test_user(self.users.get(telegram_id_str, {}).get('username')):
+                        time_left = self.format_time(int(bonus_cooldown))
+                        self.bot.answer_callback_query(call.id, f"🔒 Бонус будет доступен через {time_left}")
                         return
                     
                     bonus = random.randint(7, 19)
@@ -1910,13 +1909,13 @@ _Джавы, может, и не отличаются умом, но зато т
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += bonus
                     
-                    # Обновляем время использования бонуса
-                    self.last_bonus_used[telegram_id_str] = datetime.now()
+                    # Устанавливаем время получения бонуса
+                    self.last_bonus_time[telegram_id_str] = datetime.now()
                     
                     user_name = call.from_user.first_name or "путешественник"
                     bonus_text = f"""🎁 *Эй, {user_name}!*
-_Ты только что получил ежедневный бонус!_ 
-`•••••••••••••••••`
+Ты только что получил ежедневный бонус! 
+•••••••••••••••••
 + 💰*{bonus}* коинов"""
                     
                     # Отправляем новое сообщение вместо редактирования
@@ -1929,28 +1928,26 @@ _Ты только что получил ежедневный бонус!_
                     
                 elif call.data == "bonus_cooldown":
                     telegram_id_str = str(call.from_user.id)
-                    can_use, remaining = self.can_use_bonus(call.from_user)
-                    if not can_use:
-                        time_str = self.format_time_remaining(remaining)
-                        self.bot.answer_callback_query(call.id, f"Бонус будет доступен через {time_str}")
-                    else:
-                        self.bot.answer_callback_query(call.id, "Бонус уже доступен!")
+                    bonus_cooldown = self.check_bonus_cooldown(call.from_user.id)
+                    if bonus_cooldown:
+                        time_left = self.format_time(int(bonus_cooldown))
+                        self.bot.answer_callback_query(call.id, f"🔒 Бонус будет доступен через {time_left}")
                     
                 elif call.data == "menu_back":
                     menu_text = """*✨ Меню* 
-_Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались_"""
+Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались"""
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     btn_warehouse = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
                     btn_channel = types.InlineKeyboardButton("Наш тгк", url=BOT_CONFIG['telegram_channel'])
                     
-                    # Проверяем доступность бонуса
-                    can_use_bonus, remaining = self.can_use_bonus(call.from_user)
-                    if can_use_bonus:
-                        btn_bonus = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
+                    # Обновляем кнопку бонуса
+                    bonus_cooldown = self.check_bonus_cooldown(call.from_user.id)
+                    if bonus_cooldown and not self.is_test_user(self.users.get(str(call.from_user.id), {}).get('username')):
+                        time_left = self.format_time(int(bonus_cooldown))
+                        btn_bonus = types.InlineKeyboardButton(f"🔒 Приходи через {time_left}", callback_data="bonus_cooldown")
                     else:
-                        time_str = self.format_time_remaining(remaining)
-                        btn_bonus = types.InlineKeyboardButton(f"🔒 Приходи через {time_str}", callback_data="bonus_cooldown")
+                        btn_bonus = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
                     
                     markup.add(btn_warehouse, btn_channel)
                     markup.add(btn_bonus)
@@ -1963,9 +1960,6 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                         parse_mode='Markdown'
                     )
                     
-                # Остальные обработчики callback остаются без изменений
-                # ... (продолжение существующих обработчиков)
-                
                 elif call.data.startswith("gift_page_"):
                     page = int(call.data.split("_")[2])
                     telegram_id_str = str(call.from_user.id)
@@ -1977,7 +1971,7 @@ _Здесь ты найдешь все, что нужно, но не имеет 
                     chibis, current_page, total_pages = self.get_user_chibis_for_gift(call.from_user.id, page)
                     
                     gift_text = f"""✨ *О, да ты у нас щедрый!*
-_Выбери, какого чибика подаришь_"""
+Выбери, какого чибика подаришь"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2020,8 +2014,8 @@ _Выбери, какого чибика подаришь_"""
                     target_name = self.gift_selections[telegram_id_str]["target_name"]
                     
                     confirm_text = f"""✨ *Дарим чибика?*
-_Ты уверен, что хочешь этого? Назад вернуть уже не получится_
-_•••••••••••••••_
+Ты уверен, что хочешь этого? Назад вернуть уже не получится
+•••••••••••••••
 Кому: *{target_name}*
 Кого: *{chibi_name}*"""
                     
@@ -2054,9 +2048,7 @@ _•••••••••••••••_
                         self.bot.answer_callback_query(call.id, "🎒 *У тебя больше нет этого чибика!*")
                         return
                     
-                    # Для тестовых аккаунтов не уменьшаем количество чибиков
-                    if not self.is_admin(call.from_user):
-                        self.user_chibis[telegram_id_str].remove(chibi_name)
+                    self.user_chibis[telegram_id_str].remove(chibi_name)
                     
                     if target_telegram_id not in self.user_chibis:
                         self.user_chibis[target_telegram_id] = []
@@ -2073,7 +2065,7 @@ _•••••••••••••••_
                     
                     sender_name = call.from_user.first_name or "Отправитель"
                     sender_text = f"""*✨ Чибик отправлен! 
-_Надеюсь, {target_name} он понравится!_*"""
+Надеюсь, {target_name} он понравится!*"""
                     
                     sent_message = self.bot.send_message(
                         call.message.chat.id,
@@ -2086,7 +2078,7 @@ _Надеюсь, {target_name} он понравится!_*"""
                     self.bot.send_sticker(target_telegram_id, sticker_id_receiver)
                     
                     receiver_text = f"""*💌 Тебе подарок!*
-_{sender_name} подарил тебе {chibi_name}!_"""
+{sender_name} подарил тебе {chibi_name}!"""
                     
                     markup = types.InlineKeyboardMarkup()
                     btn_view = types.InlineKeyboardButton("Посмотреть", callback_data="warehouse_chibis_1")
@@ -2129,7 +2121,7 @@ _{sender_name} подарил тебе {chibi_name}!_"""
                     }
                     
                     create_text = """🕍 *Создаем заказ*
-_Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию_"""
+Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2152,7 +2144,7 @@ _Укажи, какого чибика охотники будут искать,
                     chibis, current_page, total_pages = self.get_all_chibis_paginated(1)
                     
                     select_text = """🕍 *Выбираем жертву*
-_Выбери чибика, которого_ *хочешь получить*"""
+Выбери чибика, которого *хочешь получить*"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2183,7 +2175,7 @@ _Выбери чибика, которого_ *хочешь получить*"""
                     chibis, current_page, total_pages = self.get_all_chibis_paginated(page)
                     
                     select_text = """🕍 *Выбираем жертву*
-_Выбери чибика, которого_ *хочешь получить*"""
+Выбери чибика, которого *хочешь получить*"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2220,7 +2212,7 @@ _Выбери чибика, которого_ *хочешь получить*"""
                     self.user_order_creation[telegram_id_str]["chibi_name"] = chibi_name
                     
                     create_text = """🕍 *Создаем заказ*
-_Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию_"""
+Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2264,8 +2256,8 @@ _Укажи, какого чибика охотники будут искать,
                     
                     recommended_price = random.randint(32, 45)
                     reward_text = f"""🕍 *Устанавливаем плату*
-_Установи награду, которую_ *ты* _заплатишь за выбранного чибика, если охотник доставит его тебе. Помни, что зарплата влияет на репутацию_
-_•••••••••••••••••_
+Установи награду, которую *ты* заплатишь за выбранного чибика, если охотник доставит его тебе. Помни, что зарплата влияет на репутацию
+•••••••••••••••••
 Введи цену и отправь мне. Рекомендованная цена : *{recommended_price}*"""
                     
                     self.user_states[telegram_id_str] = "waiting_for_reward"
@@ -2291,10 +2283,10 @@ _•••••••••••••••••_
                         return
                     
                     confirm_text = f"""🕍 *Создаем заказ* 
-_Финальный шаг. Проверь все, чтобы не было неприятностей. Имей в виду, что твоя награда_ *охотнику* _за заказ будет заложена, и вернуть ее можно будет только отменив свой заказ_
-_••••••••••••••••••_
-_Ты заказываешь:_ *{order_data['chibi_name']}* 
-_Ты платишь:_ *{order_data['reward']}*"""
+Финальный шаг. Проверь все, чтобы не было неприятностей. Имей в виду, что твоя награда *охотнику* за заказ будет заложена, и вернуть ее можно будет только отменив свой заказ
+•••••••••••••••••
+Ты заказываешь: *{order_data['chibi_name']}* 
+Ты платишь: *{order_data['reward']}*"""
                     
                     markup = types.InlineKeyboardMarkup()
                     btn_create = types.InlineKeyboardButton("Создать", callback_data="cantina_final_create")
@@ -2324,13 +2316,11 @@ _Ты платишь:_ *{order_data['reward']}*"""
                         return
                     
                     coins = self.user_coins.get(telegram_id_str, 0)
-                    # Для тестовых аккаунтов пропускаем проверку баланса
-                    if not self.is_admin(call.from_user) and coins < order_data["reward"]:
+                    if coins < order_data["reward"]:
                         self.bot.answer_callback_query(call.id, f"💸 *Недостаточно коинов!* Нужно {order_data['reward']}")
                         return
                     
-                    if not self.is_admin(call.from_user):
-                        self.user_coins[telegram_id_str] = coins - order_data["reward"]
+                    self.user_coins[telegram_id_str] = coins - order_data["reward"]
                     
                     order_id = self.next_order_id
                     self.cantina_orders[order_id] = {
@@ -2356,7 +2346,7 @@ _Ты платишь:_ *{order_data['reward']}*"""
                     self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                     
                     cantina_text = """*🕍 Кантина*
-_Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…_"""
+Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2430,7 +2420,7 @@ _Отличное место! Сборище наемников. Здесь мо
                         return
                     
                     create_text = """🕍 *Создаем заказ*
-_Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию_"""
+Укажи, какого чибика охотники будут искать, и цену, которую ты готов заплатить. Помни, цена влияет на твою репутацию"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2478,7 +2468,7 @@ _Укажи, какого чибика охотники будут искать,
                     user_order_id, user_order_data = self.get_user_active_order(call.from_user.id)
                     
                     cantina_text = """*🕍 Кантина*
-_Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…_"""
+Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2536,7 +2526,7 @@ _Отличное место! Сборище наемников. Здесь мо
                     user_order_id, user_order_data = self.get_user_active_order(call.from_user.id)
                     
                     cantina_text = """*🕍 Кантина*
-_Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…_"""
+Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2600,8 +2590,8 @@ _Отличное место! Сборище наемников. Здесь мо
                     date_str = self.format_date(order_data["date_created"])
                     
                     order_text = f"""*🕍 Твой заказ* 
-_Выбери, что хочешь сделать_
-_•••••••••••••••••_
+Выбери, что хочешь сделать
+•••••••••••••••••
 Взялись: *{accepted_count}*
 Выложен: *{date_str}*"""
                     
@@ -2628,11 +2618,9 @@ _•••••••••••••••••_
                         return
                     
                     reward = order_data["reward"]
-                    # Для тестовых аккаунтов не возвращаем коины (они и так бесконечные)
-                    if not self.is_admin(call.from_user):
-                        if telegram_id_str not in self.user_coins:
-                            self.user_coins[telegram_id_str] = 0
-                        self.user_coins[telegram_id_str] += reward
+                    if telegram_id_str not in self.user_coins:
+                        self.user_coins[telegram_id_str] = 0
+                    self.user_coins[telegram_id_str] += reward
                     
                     self.cantina_orders[order_id]["status"] = "cancelled"
                     
@@ -2647,7 +2635,7 @@ _•••••••••••••••••_
                         user_name = self.users.get(user_id, {}).get('first_name', 'Игрок')
                         sent_message = self.bot.send_message(
                             user_id,
-                            f"*Хей, {user_name}!*\n_Заказ, который ты принял, был отозван! Соболезную_",
+                            f"*Хей, {user_name}!*\nЗаказ, который ты принял, был отозван! Соболезную",
                             parse_mode='Markdown'
                         )
                         self.message_owners[(user_id, sent_message.message_id)] = user_id
@@ -2696,8 +2684,8 @@ _•••••••••••••••••_
                         button_text = "✅ Сдать заказ (1/1)" if has_fresh_chibi else "Сдать заказ (0/1)"
                         
                         order_text = f"""🕍*Твой текущий заказ*
-_Это заказ от игрока {self.users.get(order_data['creator_id'], {}).get('first_name', 'Неизвестный')}, который ты принял в кантине, и вся о нем инфа_ 
-_•••••••••••••••••_
+Это заказ от игрока {self.users.get(order_data['creator_id'], {}).get('first_name', 'Неизвестный')}, который ты принял в кантине, и вся о нем инфа 
+•••••••••••••••••
 Требуется: *{order_data['chibi_name']}* 
 Плата: *{order_data['reward']}*"""
                         
@@ -2727,15 +2715,14 @@ _•••••••••••••••••_
                             else:
                                 creator_name = "Неизвестный"
                         
-                        # Проверяем уровень для принятия заказа
                         user_level = self.user_levels.get(telegram_id_str, 1)
                         if user_level < 3:
                             self.bot.answer_callback_query(call.id, "🐸 Ты еще мелкий для гильдии! Возвращайся на 3-м уровне")
                             return
                         
                         order_text = f"""*🕍 Заказ игрока {creator_name}*
-_Подумай, насколько тебе это выгодно, и прими решение_ 
-_•••••••••••••••••_
+Подумай, насколько тебе это выгодно, и прими решение 
+•••••••••••••••••
 Требуется: {order_data['chibi_name']}
 Плата: *💰 {order_data['reward']}*"""
                         
@@ -2796,8 +2783,8 @@ _•••••••••••••••••_
                     button_text = "✅ Сдать заказ (1/1)" if has_fresh_chibi else "Сдать заказ (0/1)"
                     
                     order_text = f"""🕍*Твой текущий заказ*
-_Это заказ от игрока {self.users.get(order_data['creator_id'], {}).get('first_name', 'Неизвестный')}, который ты принял в кантине, и вся о нем инфа_ 
-_•••••••••••••••••_
+Это заказ от игрока {self.users.get(order_data['creator_id'], {}).get('first_name', 'Неизвестный')}, который ты принял в кантине, и вся о нем инфа 
+•••••••••••••••••
 Требуется: *{order_data['chibi_name']}* 
 Плата: *{order_data['reward']}*"""
                     
@@ -2839,7 +2826,7 @@ _•••••••••••••••••_
                     self.bot.answer_callback_query(call.id, "✅ *Отказ от заказа принят!*")
                     
                     cantina_text = """*🕍 Кантина*
-_Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…_"""
+Отличное место! Сборище наемников. Здесь можно дать работу, или найти нужный товар…"""
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -2915,26 +2902,24 @@ _Отличное место! Сборище наемников. Здесь мо
                         self.bot.answer_callback_query(call.id, "🎒 *У тебя нет свежего чибика для этого заказа!*")
                         return
                     
-                    # Для тестовых аккаунтов не удаляем чибики
-                    if not self.is_admin(call.from_user):
-                        if telegram_id_str in self.user_chibis and order_data["chibi_name"] in self.user_chibis[telegram_id_str]:
-                            for i, chibi in enumerate(self.user_chibis[telegram_id_str]):
-                                if chibi == order_data["chibi_name"]:
-                                    chibi_time = self.user_chibi_timestamps[telegram_id_str].get(order_data["chibi_name"])
-                                    if chibi_time and chibi_time > hunt_start_time:
-                                        del self.user_chibis[telegram_id_str][i]
-                                        if (order_data["chibi_name"] in self.user_chibi_timestamps[telegram_id_str] and
-                                            self.user_chibi_timestamps[telegram_id_str][order_data["chibi_name"]] == chibi_time):
-                                            del self.user_chibi_timestamps[telegram_id_str][order_data["chibi_name"]]
-                                        break
+                    if telegram_id_str in self.user_chibis and order_data["chibi_name"] in self.user_chibis[telegram_id_str]:
+                        for i, chibi in enumerate(self.user_chibis[telegram_id_str]):
+                            if chibi == order_data["chibi_name"]:
+                                chibi_time = self.user_chibi_timestamps[telegram_id_str].get(order_data["chibi_name"])
+                                if chibi_time and chibi_time > hunt_start_time:
+                                    del self.user_chibis[telegram_id_str][i]
+                                    if (order_data["chibi_name"] in self.user_chibi_timestamps[telegram_id_str] and
+                                        self.user_chibi_timestamps[telegram_id_str][order_data["chibi_name"]] == chibi_time):
+                                        del self.user_chibi_timestamps[telegram_id_str][order_data["chibi_name"]]
+                                    break
                     
                     reward = order_data["reward"]
                     if telegram_id_str not in self.user_coins:
                         self.user_coins[telegram_id_str] = 0
                     self.user_coins[telegram_id_str] += reward
                     
-                    # Увеличиваем опыт за заказ для быстрого прогресса
-                    exp_gained = random.randint(35, 45)
+                    # Начисляем опыт за выполнение заказа (сбалансированно)
+                    exp_gained = random.randint(25, 35)
                     level_ups, new_level = self.add_exp(call.from_user.id, exp_gained)
                     
                     creator_id = order_data["creator_id"]
@@ -2949,8 +2934,8 @@ _Отличное место! Сборище наемников. Здесь мо
                     
                     user_name = call.from_user.first_name or "путешественник"
                     complete_text = f"""*{user_name}, ты выполнил заказ!*
-_Мои поздравления! Думаю, это было достаточно непросто, но ты — первый из наемников, кто справился с ним_ 
-_••••••••••••••••••_
+Мои поздравления! Думаю, это было достаточно непросто, но ты — первый из наемников, кто справился с ним 
+••••••••••••••••••
 + *💰 {reward}* чибикоинов
 + ⭐️ *{exp_gained}* опыта"""
                     
@@ -2964,7 +2949,7 @@ _••••••••••••••••••_
                     creator_name = self.users.get(creator_id, {}).get('first_name', 'Игрок')
                     sent_message = self.bot.send_message(
                         creator_id,
-                        f"*🎉 Твой заказ выполнен!*\n_Охотник {user_name} доставил тебе {order_data['chibi_name']}!_",
+                        f"*🎉 Твой заказ выполнен!*\nОхотник {user_name} доставил тебе {order_data['chibi_name']}!",
                         parse_mode='Markdown'
                     )
                     self.message_owners[(creator_id, sent_message.message_id)] = creator_id
@@ -2981,7 +2966,7 @@ _••••••••••••••••••_
                             user_name = self.users.get(user_id, {}).get('first_name', 'Игрок')
                             sent_message = self.bot.send_message(
                                 user_id,
-                                f"*Хей, {user_name}!*\n_Заказ, который ты принял, был завершен! Соболезную_",
+                                f"*Хей, {user_name}!*\nЗаказ, который ты принял, был завершен! Соболезную",
                                 parse_mode='Markdown'
                             )
                             self.message_owners[(user_id, sent_message.message_id)] = user_id
@@ -3004,7 +2989,7 @@ _••••••••••••••••••_
                                        args=(call.from_user.id, new_level - level_ups, new_level)).start()
                     
                 elif call.data == "cantina_cannot_complete":
-                    self.bot.answer_callback_query(call.id, "🎒 *У тебя нет свежего чибика для этого заказа!*")
+                    self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
                     
                 elif call.data == "chibi_click":
                     self.bot.answer_callback_query(call.id)
@@ -3026,7 +3011,7 @@ _••••••••••••••••••_
                     
             except Exception as e:
                 logger.error(f"Ошибка в callback: {e}")
-                self.bot.answer_callback_query(call.id, "🙈 Не твое!", parse_mode='Markdown')
+                self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
 
     def run(self):
         logger.info("🤖 Чиби-бот запущен!")
