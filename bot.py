@@ -44,7 +44,7 @@ class ChibiBot:
         self.gift_selections = {}
         self.message_owners = {}
         
-        # Тестовые аккаунты
+        # Тестовые аккаунты (админы)
         self.test_users = ['tmkazavr', 'ya_admin7']
         
     def _init_collections(self):
@@ -374,7 +374,7 @@ class ChibiBot:
         except:
             pass
 
-    def add_chibi_to_user(self, telegram_id, chibi_name):
+    def add_chibi_to_user(self, telegram_id, chibi_name, rarity="Common"):
         telegram_id_str = str(telegram_id)
         
         user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
@@ -419,6 +419,21 @@ class ChibiBot:
         rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
         
         return file_path, formatted_name, rarity
+
+    def get_prize_chibi(self, chibi_name):
+        """Получить призового чибика"""
+        chibi_folder = "chibis/prize"
+        
+        if not os.path.exists(chibi_folder):
+            logger.error(f"Папка {chibi_folder} не найдена!")
+            return None, None, "Prize"
+        
+        file_path = os.path.join(chibi_folder, f"{chibi_name}.png")
+        if not os.path.exists(file_path):
+            logger.error(f"Призовой чибик {chibi_name} не найден!")
+            return None, None, "Prize"
+        
+        return file_path, chibi_name, "Prize"
 
     def get_all_common_chibis(self):
         chibi_folder = "chibis/common"
@@ -555,84 +570,6 @@ class ChibiBot:
                 return False
         return True
 
-    def process_dice_bet(self, message):
-        """Обработка ставки в кости"""
-        try:
-            telegram_id_str = str(message.from_user.id)
-            
-            if self.is_banned(message.from_user.id):
-                self.bot.reply_to(message, "🤡 *Ты в бане!*", parse_mode='Markdown')
-                return
-                
-            if not self.check_user_started(message.from_user.id):
-                self.send_start_suggestion(message.chat.id)
-                return
-
-            # Проверяем, что это ответ на сообщение бота с костями
-            if not message.reply_to_message or message.reply_to_message.from_user.id != self.bot.get_me().id:
-                return
-
-            # Проверяем, что в сообщении есть число
-            try:
-                bet = int(message.text)
-            except ValueError:
-                self.bot.reply_to(message, "❌ *Ставка должна быть числом!*", parse_mode='Markdown')
-                return
-
-            if bet < 1:
-                self.bot.reply_to(message, "❌ *Ставка должна быть больше 0!*", parse_mode='Markdown')
-                return
-
-            # Проверяем баланс
-            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-            if not user_data:
-                self.send_start_suggestion(message.chat.id)
-                return
-
-            coins = user_data.get('coins', 0)
-            if coins < bet:
-                self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {coins}💰", parse_mode='Markdown')
-                return
-
-            # Списываем ставку
-            new_coins = coins - bet
-            self.users_collection.update_one(
-                {"telegram_id": telegram_id_str},
-                {"$set": {"coins": new_coins}}
-            )
-
-            # Бросаем кость
-            dice_roll = random.randint(1, 6)
-            self.bot.send_dice(message.chat.id, emoji='🎲')
-
-            time.sleep(2)  # Ждем анимацию кости
-
-            # Проверяем результат
-            if dice_roll in [2, 4, 6]:  # Выигрыш
-                win_amount = math.ceil(bet * 1.7)
-                total_coins = new_coins + win_amount
-                
-                self.users_collection.update_one(
-                    {"telegram_id": telegram_id_str},
-                    {"$set": {"coins": total_coins}}
-                )
-
-                win_text = f"""*👽 Черт! {message.from_user.first_name}, тебя сегодня повезло… Забирай свой выигрыш!*
-_Поздравляю, ты обыграл дилера!_
-_•••••••••••••••_
-+ 💰*{win_amount}* коинов"""
-
-                self.bot.send_message(message.chat.id, win_text, parse_mode='Markdown')
-            else:  # Проигрыш
-                lose_text = f"""*👽 Ха-ха! {message.from_user.first_name}, кажется ты слил!*
-_Ты проиграл, все честно. Ставку уже не вернуть_"""
-
-                self.bot.send_message(message.chat.id, lose_text, parse_mode='Markdown')
-
-        except Exception as e:
-            logger.error(f"Ошибка в process_dice_bet: {e}")
-            self.bot.reply_to(message, "⛓️‍💥* Что-то пошло не так!*", parse_mode='Markdown')
-
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
@@ -711,25 +648,81 @@ _Ты проиграл, все честно. Ставку уже не верну
                 if not self.check_user_started(message.from_user.id):
                     self.send_start_suggestion(message.chat.id)
                     return
-                    
-                dice_text = """*🎲 Добро пожаловать в подпольное казино!* 
-_Ответь на это сообщение своей ставкой, и испытай удачу!_ 
-_•••••••••••••••_
-_1,3,5_ - проигрыш 
-_2,4,6_ - выигрыш (х1.7)"""
 
-                sent_message = self.bot.send_message(
-                    message.chat.id,
-                    dice_text,
-                    parse_mode='Markdown'
+                # Парсим ставку из команды
+                parts = message.text.split()
+                if len(parts) < 2:
+                    error_text = """🎲 *Неправильный формат!*
+_Попробуй: /dice 100_"""
+                    sent_message = self.bot.send_message(message.chat.id, error_text, parse_mode='Markdown')
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    return
+
+                try:
+                    bet = int(parts[1])
+                except ValueError:
+                    error_text = """🎲 *Неправильный формат!*
+_Попробуй: /dice 100_"""
+                    sent_message = self.bot.send_message(message.chat.id, error_text, parse_mode='Markdown')
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    return
+
+                if bet < 1:
+                    self.bot.reply_to(message, "❌ *Ставка должна быть больше 0!*", parse_mode='Markdown')
+                    return
+
+                # Проверяем баланс
+                telegram_id_str = str(message.from_user.id)
+                user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+                if not user_data:
+                    self.send_start_suggestion(message.chat.id)
+                    return
+
+                coins = user_data.get('coins', 0)
+                if coins < bet:
+                    self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {coins}💰", parse_mode='Markdown')
+                    return
+
+                # Списываем ставку
+                new_coins = coins - bet
+                self.users_collection.update_one(
+                    {"telegram_id": telegram_id_str},
+                    {"$set": {"coins": new_coins}}
                 )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                
+
+                # Бросаем кость
+                dice_message = self.bot.send_dice(message.chat.id, emoji='🎲')
+                dice_value = dice_message.dice.value
+
+                time.sleep(2)  # Ждем анимацию кости
+
+                # Проверяем результат (2,4,6 - выигрыш)
+                if dice_value in [2, 4, 6]:
+                    win_amount = math.ceil(bet * 1.7)
+                    total_coins = new_coins + win_amount
+                    
+                    self.users_collection.update_one(
+                        {"telegram_id": telegram_id_str},
+                        {"$set": {"coins": total_coins}}
+                    )
+
+                    win_text = f"""*👽 Черт! {message.from_user.first_name}, тебя сегодня повезло… Забирай свой выигрыш!*
+_Поздравляю, ты обыграл дилера!_
+_•••••••••••••••_
++ 💰*{win_amount}* коинов"""
+
+                    self.bot.send_message(message.chat.id, win_text, parse_mode='Markdown')
+                else:
+                    lose_text = f"""*👽 Ха-ха! {message.from_user.first_name}, кажется ты слил!*
+_Ты проиграл, все честно. Ставку уже не вернуть_"""
+
+                    self.bot.send_message(message.chat.id, lose_text, parse_mode='Markdown')
+
             except Exception as e:
                 logger.error(f"Ошибка в dice: {e}")
                 sent_message = self.bot.send_message(
                     message.chat.id,
-                    "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                    "⛓️‍💥* Что-то пошло не так!*",
                     parse_mode='Markdown'
                 )
                 self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
@@ -1045,6 +1038,8 @@ _2,4,6_ - выигрыш (х1.7)"""
                 )
                 
                 rarity_emoji = "🔷" if rarity == "Common" else "🔶"
+                if rarity == "Prize":
+                    rarity_emoji = "♦️"
                 
                 chibi_text = f"""*Тебе выпал — {chibi_name}!*
 Надеюсь, он тебе понравился! 
@@ -1284,7 +1279,8 @@ _2,4,6_ - выигрыш (х1.7)"""
                 self.gift_selections[telegram_id_str] = {
                     "target_user_id": target_user_id,
                     "target_telegram_id": target_user.get('telegram_id'),
-                    "target_name": target_user.get('first_name', 'пользователь')
+                    "target_name": target_user.get('first_name', 'пользователь'),
+                    "is_admin": self.is_test_user(message.from_user.username)
                 }
                 
                 chibis, current_page, total_pages = self.get_user_chibis_for_gift(message.from_user.id, 1)
@@ -1337,16 +1333,6 @@ _2,4,6_ - выигрыш (х1.7)"""
                     parse_mode='Markdown'
                 )
                 self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-
-        @self.bot.message_handler(func=lambda message: True, content_types=['text'])
-        def text_handler(message):
-            """Обработка текстовых сообщений для игры в кости"""
-            if message.chat.type == 'private' and message.reply_to_message:
-                # Проверяем, что это ответ на сообщение бота с костями
-                reply_text = message.reply_to_message.text or ""
-                if "подпольное казино" in reply_text:
-                    self.process_dice_bet(message)
-                    return
 
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
@@ -1650,6 +1636,8 @@ _2,4,6_ - выигрыш (х1.7)"""
                             chibi_count = self.get_chibi_count(call.from_user.id, chibi_name)
                             
                             rarity_emoji = "🔷" if rarity == "Common" else "🔶"
+                            if rarity == "Prize":
+                                rarity_emoji = "♦️"
                             
                             chibi_text = f"""*Тебе выпал — {chibi_name}!*
 Надеюсь, он тебе понравился!
@@ -1939,18 +1927,21 @@ _2,4,6_ - выигрыш (х1.7)"""
                     chibi_name = gift_data["chibi_name"]
                     target_telegram_id = gift_data["target_telegram_id"]
                     target_name = gift_data["target_name"]
+                    is_admin = gift_data["is_admin"]
                     
                     user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
                     if not user_data or chibi_name not in user_data.get('chibis', []):
                         self.bot.answer_callback_query(call.id, "🎒 *У тебя больше нет этого чибика!*")
                         return
                     
+                    # Удаляем чибика у отправителя
                     new_chibis = [chibi for chibi in user_data.get('chibis', []) if chibi != chibi_name]
                     self.users_collection.update_one(
                         {"telegram_id": telegram_id_str},
                         {"$set": {"chibis": new_chibis}}
                     )
                     
+                    # Добавляем чибика получателю
                     target_user = self.users_collection.find_one({"telegram_id": target_telegram_id})
                     if target_user:
                         target_chibis = target_user.get('chibis', [])
@@ -1968,38 +1959,74 @@ _2,4,6_ - выигрыш (х1.7)"""
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-
-                    sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
-                    self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
+                    # Проверяем, является ли даритель админом и существует ли призовой чибик
+                    prize_file_path, _, prize_rarity = self.get_prize_chibi(chibi_name)
                     
-                    sender_name = call.from_user.first_name or "Отправитель"
-                    sender_text = f"""*✨ Чибик отправлен! 
+                    if is_admin and prize_file_path is not None:
+                        # Отправляем специальный стикер для призового чибика
+                        sticker_id = "CAACAgIAAxkBAAE9l5hpEIdq0Z0LEa7UxgJtrNNZtwABDzQAAttHAALpzBBK7BbFlNYkVyw2BA"
+                        self.bot.send_sticker(call.message.chat.id, sticker_id)
+                        
+                        sender_name = call.from_user.first_name or "Админ"
+                        sender_text = f"""*🍀 Эй, {target_name}!*
+_Ты капец везучий, ведь только что_ *ВЫИГРАЛ В КОНКУРСЕ!*
+_•••••••••••••••_
++ ♦️* {chibi_name}*"""
+                        
+                        markup = types.InlineKeyboardMarkup()
+                        btn_view = types.InlineKeyboardButton("Глянуть", callback_data="warehouse_chibis_1")
+                        markup.add(btn_view)
+                        
+                        sent_message = self.bot.send_message(
+                            call.message.chat.id,
+                            sender_text,
+                            reply_markup=markup,
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                        
+                        # Отправляем получателю
+                        sent_message = self.bot.send_message(
+                            target_telegram_id,
+                            sender_text,
+                            reply_markup=markup,
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
+                        
+                    else:
+                        # Обычный подарок
+                        sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
+                        self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
+                        
+                        sender_name = call.from_user.first_name or "Отправитель"
+                        sender_text = f"""*✨ Чибик отправлен! 
 Надеюсь, {target_name} он понравится!*"""
-                    
-                    sent_message = self.bot.send_message(
-                        call.message.chat.id,
-                        sender_text,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-                    
-                    sticker_id_receiver = "CAACAgIAAxkBAAE9OxxpBRLZ5OANTuRD-97sRPdCONwv0AACU0YAAkVlEErI0vjxKMrHnTYE"
-                    self.bot.send_sticker(target_telegram_id, sticker_id_receiver)
-                    
-                    receiver_text = f"""*💌 Тебе подарок!*
+                        
+                        sent_message = self.bot.send_message(
+                            call.message.chat.id,
+                            sender_text,
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                        
+                        sticker_id_receiver = "CAACAgIAAxkBAAE9OxxpBRLZ5OANTuRD-97sRPdCONwv0AACU0YAAkVlEErI0vjxKMrHnTYE"
+                        self.bot.send_sticker(target_telegram_id, sticker_id_receiver)
+                        
+                        receiver_text = f"""*💌 Тебе подарок!*
 {sender_name} подарил тебе {chibi_name}!"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    btn_view = types.InlineKeyboardButton("Посмотреть", callback_data="warehouse_chibis_1")
-                    markup.add(btn_view)
-                    
-                    sent_message = self.bot.send_message(
-                        target_telegram_id,
-                        receiver_text,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
+                        
+                        markup = types.InlineKeyboardMarkup()
+                        btn_view = types.InlineKeyboardButton("Посмотреть", callback_data="warehouse_chibis_1")
+                        markup.add(btn_view)
+                        
+                        sent_message = self.bot.send_message(
+                            target_telegram_id,
+                            receiver_text,
+                            reply_markup=markup,
+                            parse_mode='Markdown'
+                        )
+                        self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
                     
                     del self.gift_selections[telegram_id_str]
                     
