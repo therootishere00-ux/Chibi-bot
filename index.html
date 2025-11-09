@@ -27,7 +27,6 @@
             background-color: #000;
         }
 
-        /* Экран загрузки */
         .loading-screen {
             position: absolute;
             top: 0;
@@ -84,7 +83,6 @@
             font-size: 14px;
         }
 
-        /* Основной экран */
         .main-screen {
             position: absolute;
             top: 0;
@@ -249,7 +247,6 @@
             color: #000;
         }
 
-        /* Экран коллекции */
         .collection-screen {
             position: absolute;
             top: 0;
@@ -264,6 +261,7 @@
             z-index: 8;
             padding: 20px;
             box-sizing: border-box;
+            overflow-y: auto;
         }
 
         .header {
@@ -293,16 +291,13 @@
             font-weight: 600;
         }
 
-        .chibi-grid-container {
-            flex: 1;
-            overflow-y: auto;
-            padding: 0 5px;
-        }
-
         .chibi-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 12px;
+            padding: 0 5px;
+            max-height: 70vh;
+            overflow-y: auto;
         }
 
         .chibi-card {
@@ -374,29 +369,9 @@
         .hidden {
             display: none !important;
         }
-
-        /* Стили для скроллбара */
-        .chibi-grid-container::-webkit-scrollbar {
-            width: 4px;
-        }
-
-        .chibi-grid-container::-webkit-scrollbar-track {
-            background: #1a1a1a;
-            border-radius: 2px;
-        }
-
-        .chibi-grid-container::-webkit-scrollbar-thumb {
-            background: #FFD951;
-            border-radius: 2px;
-        }
-
-        .chibi-grid-container::-webkit-scrollbar-thumb:hover {
-            background: #e6c447;
-        }
     </style>
 </head>
 <body>
-    <!-- Экран загрузки -->
     <div class="loading-screen" id="loadingScreen">
         <div class="bot-name">@chibeki_bot</div>
         
@@ -406,11 +381,10 @@
             <div class="loading-progress" id="progress"></div>
         </div>
 
-        <div class="footer-text" id="loadingText">Загрузка коллекции...</div>
+        <div class="footer-text">Загрузка коллекции...</div>
     </div>
 
-    <!-- Основной экран -->
-    <div class="main-screen hidden" id="mainScreen">
+    <div class="main-screen" id="mainScreen">
         <div class="user-avatar" id="userAvatar">
             TG
         </div>
@@ -420,8 +394,8 @@
         <div class="subtitle">Чибики</div>
         
         <div class="item-card" id="commonChibisBtn">
-            <div class="item-image">
-                <img src="" alt="Обычные чибики" id="commonChibiImage">
+            <div class="item-image" id="commonChibiImage">
+                <img src="" alt="Обычные чибики" id="commonChibiImg">
             </div>
             <div class="item-content">
                 <div class="item-title">Обычные</div>
@@ -432,11 +406,12 @@
         </div>
         
         <div class="item-card" id="secretChibisBtn">
-            <div class="icon-image" id="secretIcon">
-                <i class="fas fa-question"></i>
+            <div class="item-image" id="secretChibiImage">
+                <i class="fas fa-question" id="secretChibiIcon"></i>
+                <img src="" alt="Секретные чибики" id="secretChibiImg" style="display: none;">
             </div>
             <div class="item-content">
-                <div class="item-title" id="secretTitle">???</div>
+                <div class="item-title" id="secretChibiTitle">???</div>
             </div>
             <div class="item-chevron">
                 <i class="fas fa-chevron-right"></i>
@@ -454,40 +429,19 @@
         </div>
     </div>
 
-    <!-- Экран коллекции обычных чибиков -->
     <div class="collection-screen hidden" id="commonCollectionScreen">
         <div class="header">
-            <div class="back-button" id="backButtonCommon">
+            <div class="back-button" id="backButton">
                 <i class="fas fa-arrow-left"></i>
             </div>
             <div class="header-title">Обычные чибики</div>
         </div>
         
-        <div class="chibi-grid-container">
-            <div class="chibi-grid" id="commonChibiGrid">
-                <!-- Чибики будут добавляться сюда через JavaScript -->
-            </div>
-        </div>
-    </div>
-
-    <!-- Экран коллекции секретных чибиков -->
-    <div class="collection-screen hidden" id="secretCollectionScreen">
-        <div class="header">
-            <div class="back-button" id="backButtonSecret">
-                <i class="fas fa-arrow-left"></i>
-            </div>
-            <div class="header-title">Секретные чибики</div>
-        </div>
-        
-        <div class="chibi-grid-container">
-            <div class="chibi-grid" id="secretChibiGrid">
-                <!-- Чибики будут добавляться сюда через JavaScript -->
-            </div>
+        <div class="chibi-grid" id="commonChibiGrid">
         </div>
     </div>
 
     <script>
-        // Запрет масштабирования и выделения
         document.addEventListener('gesturestart', function(e) {
             e.preventDefault();
         });
@@ -496,67 +450,122 @@
             e.preventDefault();
         });
         
-        // Элементы
         const progressBar = document.getElementById('progress');
         const loadingScreen = document.getElementById('loadingScreen');
-        const loadingText = document.getElementById('loadingText');
         const mainScreen = document.getElementById('mainScreen');
         const userAvatar = document.getElementById('userAvatar');
         const commonChibisBtn = document.getElementById('commonChibisBtn');
-        const secretChibisBtn = document.getElementById('secretChibisBtn');
         const commonCollectionScreen = document.getElementById('commonCollectionScreen');
-        const secretCollectionScreen = document.getElementById('secretCollectionScreen');
-        const backButtonCommon = document.getElementById('backButtonCommon');
-        const backButtonSecret = document.getElementById('backButtonSecret');
+        const backButton = document.getElementById('backButton');
         const commonChibiGrid = document.getElementById('commonChibiGrid');
-        const secretChibiGrid = document.getElementById('secretChibiGrid');
-        const commonChibiImage = document.getElementById('commonChibiImage');
-        const secretIcon = document.getElementById('secretIcon');
-        const secretTitle = document.getElementById('secretTitle');
+        const commonChibiImg = document.getElementById('commonChibiImg');
+        const secretChibisBtn = document.getElementById('secretChibisBtn');
+        const secretChibiImage = document.getElementById('secretChibiImage');
+        const secretChibiIcon = document.getElementById('secretChibiIcon');
+        const secretChibiImg = document.getElementById('secretChibiImg');
+        const secretChibiTitle = document.getElementById('secretChibiTitle');
         
-        // Глобальные переменные для хранения данных
-        let userData = null;
-        let allCommonChibis = [];
-        let allSecretChibis = [];
+        let userData = {
+            common_collected: [],
+            secret_collected: [],
+            all_common: [],
+            all_secret: [],
+            user_name: 'Путешественник'
+        };
         
-        // Базовый URL для API (замените на ваш домен)
-        const API_BASE_URL = window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://your-render-app.onrender.com';
+        const urlParams = new URLSearchParams(window.location.search);
+        const telegramId = urlParams.get('telegram_id');
         
-        // Функция для получения данных пользователя
-        async function fetchUserData(telegramId) {
-            try {
-                loadingText.textContent = 'Загрузка данных пользователя...';
-                const response = await fetch(`${API_BASE_URL}/api/user/${telegramId}`);
-                if (!response.ok) {
-                    throw new Error('Ошибка загрузки данных');
+        function initTelegramUser() {
+            if (window.Telegram && window.Telegram.WebApp) {
+                const user = Telegram.WebApp.initDataUnsafe.user;
+                if (user && user.photo_url) {
+                    userAvatar.innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">`;
+                } else {
+                    userAvatar.innerHTML = 'TG';
                 }
-                return await response.json();
-            } catch (error) {
-                console.error('Ошибка загрузки данных:', error);
-                throw error;
-            }
-        }
-        
-        // Функция для получения URL изображения чибика
-        function getChibiImageUrl(chibiName, type = 'common') {
-            // В продакшене замените на реальные URL ваших изображений
-            if (type === 'secret') {
-                return `https://raw.githubusercontent.com/ваш-username/ваш-репозиторий/main/chibis/secret/${chibiName.replace(/ /g, '_')}.png`;
+                
+                if (user) {
+                    document.title = `Коллекция ${user.first_name || 'путешественника'}`;
+                }
             } else {
-                return `https://raw.githubusercontent.com/ваш-username/ваш-репозиторий/main/chibis/common/${chibiName.replace(/ /g, '_')}.png`;
+                userAvatar.innerHTML = '<img src="https://via.placeholder.com/50/333/fff?text=TG" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">';
             }
         }
         
-        // Функция для создания карточки чибика
-        function createChibiCard(chibiName, isCollected, type = 'common') {
+        async function loadUserData() {
+            if (!telegramId) {
+                console.error("No telegram_id in URL");
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/user/${telegramId}`);
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+                userData = data;
+                updateMainScreen();
+            } catch (error) {
+                console.error('Error loading user data:', error);
+                
+                const botUrl = window.location.hostname.includes('github.io') 
+                    ? 'https://your-bot-url.onrender.com' 
+                    : '';
+                
+                if (botUrl) {
+                    try {
+                        const response = await fetch(`${botUrl}/api/user/${telegramId}`);
+                        const data = await response.json();
+                        userData = data;
+                        updateMainScreen();
+                    } catch (secondError) {
+                        console.error('Second attempt failed:', secondError);
+                    }
+                }
+            }
+        }
+        
+        function updateMainScreen() {
+            if (userData.common_collected.length > 0) {
+                const randomCommonChibi = userData.common_collected[Math.floor(Math.random() * userData.common_collected.length)];
+                const imageUrl = `chibis/common/${randomCommonChibi}.png`;
+                commonChibiImg.src = imageUrl;
+                commonChibiImg.onerror = function() {
+                    commonChibiImg.src = 'https://via.placeholder.com/50/333/fff?text=?';
+                };
+            } else {
+                commonChibiImg.src = 'https://via.placeholder.com/50/333/fff?text=?';
+            }
+            
+            if (userData.secret_collected.length > 0) {
+                const firstSecretChibi = userData.secret_collected[0];
+                const imageUrl = `chibis/secret/${firstSecretChibi}.png`;
+                secretChibiIcon.style.display = 'none';
+                secretChibiImg.src = imageUrl;
+                secretChibiImg.style.display = 'block';
+                secretChibiImg.onerror = function() {
+                    secretChibiIcon.style.display = 'block';
+                    secretChibiImg.style.display = 'none';
+                };
+                secretChibiTitle.textContent = 'Секретные';
+            } else {
+                secretChibiIcon.style.display = 'block';
+                secretChibiImg.style.display = 'none';
+                secretChibiTitle.textContent = '???';
+            }
+        }
+        
+        function createChibiCard(chibiName, isCollected) {
             const card = document.createElement('div');
             card.className = 'chibi-card';
             
-            const imageUrl = getChibiImageUrl(chibiName, type);
+            const imageUrl = `chibis/common/${chibiName}.png`;
             
             card.innerHTML = `
                 <div class="chibi-image">
-                    <img src="${imageUrl}" alt="${chibiName}" style="opacity: ${isCollected ? '1' : '0.5'}">
+                    <img src="${imageUrl}" alt="${chibiName}" style="opacity: ${isCollected ? '1' : '0.3'}">
                 </div>
                 <div class="chibi-name">${chibiName}</div>
                 ${!isCollected ? `
@@ -569,54 +578,23 @@
                 ` : ''}
             `;
             
+            card.querySelector('img').onerror = function() {
+                this.src = 'https://via.placeholder.com/100/333/fff?text=?';
+            };
+            
             return card;
         }
         
-        // Функция для загрузки коллекции обычных чибиков
         function loadCommonCollection() {
             commonChibiGrid.innerHTML = '';
             
-            allCommonChibis.forEach(chibiName => {
-                const isCollected = userData.common_chibis.includes(chibiName);
-                const chibiCard = createChibiCard(chibiName, isCollected, 'common');
+            userData.all_common.forEach(chibiName => {
+                const isCollected = userData.common_collected.includes(chibiName);
+                const chibiCard = createChibiCard(chibiName, isCollected);
                 commonChibiGrid.appendChild(chibiCard);
             });
         }
         
-        // Функция для загрузки коллекции секретных чибиков
-        function loadSecretCollection() {
-            secretChibiGrid.innerHTML = '';
-            
-            allSecretChibis.forEach(chibiName => {
-                const isCollected = userData.secret_chibis.includes(chibiName);
-                const chibiCard = createChibiCard(chibiName, isCollected, 'secret');
-                secretChibiGrid.appendChild(chibiCard);
-            });
-        }
-        
-        // Функция для обновления главного экрана
-        function updateMainScreen() {
-            // Обновляем аватар
-            if (window.Telegram && window.Telegram.WebApp) {
-                const user = Telegram.WebApp.initDataUnsafe.user;
-                if (user && user.photo_url) {
-                    userAvatar.innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">`;
-                }
-            }
-            
-            // Обновляем изображение обычных чибиков
-            if (userData.display_common) {
-                commonChibiImage.src = getChibiImageUrl(userData.display_common, 'common');
-            }
-            
-            // Обновляем секретные чибики
-            if (userData.has_secret && userData.display_secret) {
-                secretIcon.innerHTML = `<img src="${getChibiImageUrl(userData.display_secret, 'secret')}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">`;
-                secretTitle.textContent = 'Секретные';
-            }
-        }
-        
-        // Обработчики навигации
         commonChibisBtn.addEventListener('click', function() {
             mainScreen.classList.add('hidden');
             commonCollectionScreen.classList.remove('hidden');
@@ -624,24 +602,8 @@
             loadCommonCollection();
         });
         
-        secretChibisBtn.addEventListener('click', function() {
-            if (!userData.has_secret) {
-                return; // Не показываем, если нет секретных чибиков
-            }
-            mainScreen.classList.add('hidden');
-            secretCollectionScreen.classList.remove('hidden');
-            secretCollectionScreen.style.opacity = '1';
-            loadSecretCollection();
-        });
-        
-        backButtonCommon.addEventListener('click', function() {
+        backButton.addEventListener('click', function() {
             commonCollectionScreen.classList.add('hidden');
-            mainScreen.classList.remove('hidden');
-            mainScreen.style.opacity = '1';
-        });
-        
-        backButtonSecret.addEventListener('click', function() {
-            secretCollectionScreen.classList.add('hidden');
             mainScreen.classList.remove('hidden');
             mainScreen.style.opacity = '1';
         });
@@ -674,64 +636,22 @@
             }
         }
         
-        async function finishLoading() {
+        function finishLoading() {
             loadingScreen.style.opacity = '0';
             
-            setTimeout(async () => {
-                try {
-                    // Получаем telegramId из Telegram WebApp
-                    let telegramId = null;
-                    if (window.Telegram && window.Telegram.WebApp) {
-                        telegramId = Telegram.WebApp.initDataUnsafe.user.id;
-                        loadingText.textContent = 'Загрузка коллекции...';
-                        
-                        // Загружаем данные пользователя
-                        userData = await fetchUserData(telegramId);
-                        allCommonChibis = userData.all_common_chibis;
-                        allSecretChibis = userData.all_secret_chibis;
-                        
-                        // Обновляем интерфейс
-                        updateMainScreen();
-                    } else {
-                        // Режим демо (без Telegram)
-                        userData = {
-                            common_chibis: ['Грит', 'Таррек', 'Крилл'],
-                            secret_chibis: [],
-                            display_common: 'Грит',
-                            display_secret: null,
-                            has_secret: false,
-                            all_common_chibis: ['Грит', 'Таррек', 'Крилл', 'Гето', 'Дин', 'Боксо', 'Мерин', 'Хрило', 'Гомадо', 'Грож', 'Грирт', 'Тарр'],
-                            all_secret_chibis: []
-                        };
-                        allCommonChibis = userData.all_common_chibis;
-                        updateMainScreen();
-                    }
-                    
-                    mainScreen.style.opacity = '1';
-                    mainScreen.classList.remove('hidden');
-                    
-                    setTimeout(() => {
-                        loadingScreen.style.display = 'none';
-                    }, 800);
-                    
-                } catch (error) {
-                    console.error('Ошибка инициализации:', error);
-                    loadingText.textContent = 'Ошибка загрузки. Обновите страницу.';
-                    // Можно показать сообщение об ошибке пользователю
-                }
+            setTimeout(() => {
+                mainScreen.style.opacity = '1';
+                
+                setTimeout(() => {
+                    loadingScreen.style.display = 'none';
+                }, 800);
             }, 500);
         }
         
         let progress = 0;
-        
-        // Инициализация при загрузке страницы
         window.onload = function() {
-            // Инициализируем Telegram WebApp
-            if (window.Telegram && Telegram.WebApp) {
-                Telegram.WebApp.ready();
-                Telegram.WebApp.expand();
-            }
-            
+            initTelegramUser();
+            loadUserData();
             setTimeout(simulateRealisticLoading, 500);
         };
     </script>
