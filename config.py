@@ -1,9 +1,5 @@
-import os
-
 BOT_CONFIG = {
-    'telegram_channel': 'https://t.me/chibeki_official',
-    'mongodb_uri': os.getenv('MONGODB_URI', 'mongodb://localhost:27017/'),
-    'db_name': 'chibibot_db'
+    'telegram_channel': 'https://t.me/chibeki_official'
 }
 
 BOT_TEXTS = {
