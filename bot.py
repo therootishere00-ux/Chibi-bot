@@ -2127,7 +2127,8 @@ class ChibiBot:
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                                        sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
+
+                    sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
                     self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
                     
                     sender_name = call.from_user.first_name or "Отправитель"
