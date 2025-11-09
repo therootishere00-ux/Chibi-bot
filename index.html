@@ -1,1 +1,739 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chibeki Bot</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            font-family: 'Montserrat', sans-serif;
+            overflow: hidden;
+            position: relative;
+            background-color: #000;
+        }
 
+        /* Экран загрузки */
+        .loading-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #FFD951;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            transition: opacity 0.8s ease;
+        }
+
+        .bot-name {
+            color: white;
+            font-size: 16px;
+            opacity: 0.7;
+            margin-bottom: 15px;
+            position: absolute;
+            top: calc(50% - 120px);
+        }
+
+        .logo {
+            width: 200px;
+            height: auto;
+            margin-bottom: 40px;
+        }
+
+        .loading-bar {
+            width: 200px;
+            height: 4px;
+            background-color: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+            overflow: hidden;
+            position: relative;
+            margin-top: 10px;
+        }
+
+        .loading-progress {
+            position: absolute;
+            height: 100%;
+            width: 0%;
+            background-color: white;
+            border-radius: 2px;
+        }
+
+        .footer-text {
+            position: absolute;
+            bottom: 20px;
+            color: white;
+            opacity: 0.7;
+            font-size: 14px;
+        }
+
+        /* Основной экран */
+        .main-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            display: flex;
+            flex-direction: column;
+            opacity: 0;
+            transition: opacity 0.8s ease;
+            z-index: 5;
+            padding: 20px;
+            box-sizing: border-box;
+            overflow-y: auto;
+        }
+
+        .user-avatar {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            border-radius: 17px;
+            background-color: #333;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 12px;
+        }
+
+        .main-logo {
+            width: 120px;
+            height: auto;
+            margin-top: 80px;
+            align-self: center;
+        }
+
+        .subtitle {
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            align-self: flex-start;
+        }
+
+        .item-card {
+            background-color: #1a1a1a;
+            border-radius: 18px;
+            padding: 18px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            width: calc(100% - 20px);
+            box-sizing: border-box;
+            margin-left: 10px;
+            margin-right: 10px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+
+        .item-card:active {
+            background-color: #2a2a2a;
+        }
+
+        .item-image {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-right: 15px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .item-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .icon-image {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            background-color: rgba(255, 255, 255, 0.1);
+            margin-right: 15px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 20px;
+        }
+
+        .item-content {
+            flex: 1;
+        }
+
+        .item-title {
+            font-weight: 600;
+            font-size: 16px;
+            color: #fff;
+        }
+
+        .item-chevron {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 16px;
+        }
+
+        .article-card {
+            background-color: #1a1a1a;
+            border-radius: 18px;
+            padding: 18px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            width: calc(100% - 20px);
+            box-sizing: border-box;
+            margin-left: 10px;
+            margin-right: 10px;
+            position: relative;
+        }
+
+        .article-image {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-right: 15px;
+        }
+
+        .article-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .article-title {
+            font-weight: 600;
+            font-size: 16px;
+            color: #fff;
+            flex: 1;
+        }
+
+        .article-link {
+            color: #FFD951;
+            font-size: 14px;
+            text-decoration: none;
+            font-weight: 500;
+            padding: 6px 12px;
+            border: 1px solid #FFD951;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .article-link:hover {
+            background-color: #FFD951;
+            color: #000;
+        }
+
+        /* Экран коллекции */
+        .collection-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            display: flex;
+            flex-direction: column;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            z-index: 8;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            position: relative;
+        }
+
+        .back-button {
+            color: white;
+            font-size: 20px;
+            margin-right: 15px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 10px;
+            transition: background-color 0.2s ease;
+        }
+
+        .back-button:active {
+            background-color: #2a2a2a;
+        }
+
+        .header-title {
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .chibi-grid-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 5px;
+        }
+
+        .chibi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        .chibi-card {
+            background-color: #1a1a1a;
+            border-radius: 15px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            aspect-ratio: 1;
+            position: relative;
+            transition: transform 0.2s ease;
+        }
+
+        .chibi-card:active {
+            transform: scale(0.95);
+        }
+
+        .chibi-image {
+            width: 100%;
+            height: 70%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .chibi-image img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+
+        .chibi-name {
+            color: white;
+            font-size: 10px;
+            text-align: center;
+            font-weight: 500;
+            line-height: 1.2;
+            margin-top: 4px;
+        }
+
+        .locked-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 15px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .lock-icon {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 20px;
+            margin-bottom: 5px;
+        }
+
+        .locked-text {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 9px;
+            text-align: center;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Стили для скроллбара */
+        .chibi-grid-container::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .chibi-grid-container::-webkit-scrollbar-track {
+            background: #1a1a1a;
+            border-radius: 2px;
+        }
+
+        .chibi-grid-container::-webkit-scrollbar-thumb {
+            background: #FFD951;
+            border-radius: 2px;
+        }
+
+        .chibi-grid-container::-webkit-scrollbar-thumb:hover {
+            background: #e6c447;
+        }
+    </style>
+</head>
+<body>
+    <!-- Экран загрузки -->
+    <div class="loading-screen" id="loadingScreen">
+        <div class="bot-name">@chibeki_bot</div>
+        
+        <img src="https://i.ibb.co/zTB331HR/image.png" alt="Логотип" class="logo">
+        
+        <div class="loading-bar">
+            <div class="loading-progress" id="progress"></div>
+        </div>
+
+        <div class="footer-text" id="loadingText">Загрузка коллекции...</div>
+    </div>
+
+    <!-- Основной экран -->
+    <div class="main-screen hidden" id="mainScreen">
+        <div class="user-avatar" id="userAvatar">
+            TG
+        </div>
+        
+        <img src="https://i.ibb.co/zTB331HR/image.png" alt="Логотип" class="main-logo">
+        
+        <div class="subtitle">Чибики</div>
+        
+        <div class="item-card" id="commonChibisBtn">
+            <div class="item-image">
+                <img src="" alt="Обычные чибики" id="commonChibiImage">
+            </div>
+            <div class="item-content">
+                <div class="item-title">Обычные</div>
+            </div>
+            <div class="item-chevron">
+                <i class="fas fa-chevron-right"></i>
+            </div>
+        </div>
+        
+        <div class="item-card" id="secretChibisBtn">
+            <div class="icon-image" id="secretIcon">
+                <i class="fas fa-question"></i>
+            </div>
+            <div class="item-content">
+                <div class="item-title" id="secretTitle">???</div>
+            </div>
+            <div class="item-chevron">
+                <i class="fas fa-chevron-right"></i>
+            </div>
+        </div>
+        
+        <div class="subtitle">Статьи</div>
+        
+        <div class="article-card">
+            <div class="article-image">
+                <img src="https://i.ibb.co/sJVz9tH3/IMG-6876.png" alt="Статья">
+            </div>
+            <div class="article-title">Как работают кости?</div>
+            <a href="https://example.com" target="_blank" class="article-link">Читать</a>
+        </div>
+    </div>
+
+    <!-- Экран коллекции обычных чибиков -->
+    <div class="collection-screen hidden" id="commonCollectionScreen">
+        <div class="header">
+            <div class="back-button" id="backButtonCommon">
+                <i class="fas fa-arrow-left"></i>
+            </div>
+            <div class="header-title">Обычные чибики</div>
+        </div>
+        
+        <div class="chibi-grid-container">
+            <div class="chibi-grid" id="commonChibiGrid">
+                <!-- Чибики будут добавляться сюда через JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Экран коллекции секретных чибиков -->
+    <div class="collection-screen hidden" id="secretCollectionScreen">
+        <div class="header">
+            <div class="back-button" id="backButtonSecret">
+                <i class="fas fa-arrow-left"></i>
+            </div>
+            <div class="header-title">Секретные чибики</div>
+        </div>
+        
+        <div class="chibi-grid-container">
+            <div class="chibi-grid" id="secretChibiGrid">
+                <!-- Чибики будут добавляться сюда через JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Запрет масштабирования и выделения
+        document.addEventListener('gesturestart', function(e) {
+            e.preventDefault();
+        });
+        
+        document.addEventListener('selectstart', function(e) {
+            e.preventDefault();
+        });
+        
+        // Элементы
+        const progressBar = document.getElementById('progress');
+        const loadingScreen = document.getElementById('loadingScreen');
+        const loadingText = document.getElementById('loadingText');
+        const mainScreen = document.getElementById('mainScreen');
+        const userAvatar = document.getElementById('userAvatar');
+        const commonChibisBtn = document.getElementById('commonChibisBtn');
+        const secretChibisBtn = document.getElementById('secretChibisBtn');
+        const commonCollectionScreen = document.getElementById('commonCollectionScreen');
+        const secretCollectionScreen = document.getElementById('secretCollectionScreen');
+        const backButtonCommon = document.getElementById('backButtonCommon');
+        const backButtonSecret = document.getElementById('backButtonSecret');
+        const commonChibiGrid = document.getElementById('commonChibiGrid');
+        const secretChibiGrid = document.getElementById('secretChibiGrid');
+        const commonChibiImage = document.getElementById('commonChibiImage');
+        const secretIcon = document.getElementById('secretIcon');
+        const secretTitle = document.getElementById('secretTitle');
+        
+        // Глобальные переменные для хранения данных
+        let userData = null;
+        let allCommonChibis = [];
+        let allSecretChibis = [];
+        
+        // Базовый URL для API (замените на ваш домен)
+        const API_BASE_URL = window.location.hostname === 'localhost' ? 'http://localhost:5000' : 'https://your-render-app.onrender.com';
+        
+        // Функция для получения данных пользователя
+        async function fetchUserData(telegramId) {
+            try {
+                loadingText.textContent = 'Загрузка данных пользователя...';
+                const response = await fetch(`${API_BASE_URL}/api/user/${telegramId}`);
+                if (!response.ok) {
+                    throw new Error('Ошибка загрузки данных');
+                }
+                return await response.json();
+            } catch (error) {
+                console.error('Ошибка загрузки данных:', error);
+                throw error;
+            }
+        }
+        
+        // Функция для получения URL изображения чибика
+        function getChibiImageUrl(chibiName, type = 'common') {
+            // В продакшене замените на реальные URL ваших изображений
+            if (type === 'secret') {
+                return `https://raw.githubusercontent.com/ваш-username/ваш-репозиторий/main/chibis/secret/${chibiName.replace(/ /g, '_')}.png`;
+            } else {
+                return `https://raw.githubusercontent.com/ваш-username/ваш-репозиторий/main/chibis/common/${chibiName.replace(/ /g, '_')}.png`;
+            }
+        }
+        
+        // Функция для создания карточки чибика
+        function createChibiCard(chibiName, isCollected, type = 'common') {
+            const card = document.createElement('div');
+            card.className = 'chibi-card';
+            
+            const imageUrl = getChibiImageUrl(chibiName, type);
+            
+            card.innerHTML = `
+                <div class="chibi-image">
+                    <img src="${imageUrl}" alt="${chibiName}" style="opacity: ${isCollected ? '1' : '0.5'}">
+                </div>
+                <div class="chibi-name">${chibiName}</div>
+                ${!isCollected ? `
+                    <div class="locked-overlay">
+                        <div class="lock-icon">
+                            <i class="fas fa-lock"></i>
+                        </div>
+                        <div class="locked-text">Не получен</div>
+                    </div>
+                ` : ''}
+            `;
+            
+            return card;
+        }
+        
+        // Функция для загрузки коллекции обычных чибиков
+        function loadCommonCollection() {
+            commonChibiGrid.innerHTML = '';
+            
+            allCommonChibis.forEach(chibiName => {
+                const isCollected = userData.common_chibis.includes(chibiName);
+                const chibiCard = createChibiCard(chibiName, isCollected, 'common');
+                commonChibiGrid.appendChild(chibiCard);
+            });
+        }
+        
+        // Функция для загрузки коллекции секретных чибиков
+        function loadSecretCollection() {
+            secretChibiGrid.innerHTML = '';
+            
+            allSecretChibis.forEach(chibiName => {
+                const isCollected = userData.secret_chibis.includes(chibiName);
+                const chibiCard = createChibiCard(chibiName, isCollected, 'secret');
+                secretChibiGrid.appendChild(chibiCard);
+            });
+        }
+        
+        // Функция для обновления главного экрана
+        function updateMainScreen() {
+            // Обновляем аватар
+            if (window.Telegram && window.Telegram.WebApp) {
+                const user = Telegram.WebApp.initDataUnsafe.user;
+                if (user && user.photo_url) {
+                    userAvatar.innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">`;
+                }
+            }
+            
+            // Обновляем изображение обычных чибиков
+            if (userData.display_common) {
+                commonChibiImage.src = getChibiImageUrl(userData.display_common, 'common');
+            }
+            
+            // Обновляем секретные чибики
+            if (userData.has_secret && userData.display_secret) {
+                secretIcon.innerHTML = `<img src="${getChibiImageUrl(userData.display_secret, 'secret')}" style="width:100%;height:100%;object-fit:cover;border-radius:12px;">`;
+                secretTitle.textContent = 'Секретные';
+            }
+        }
+        
+        // Обработчики навигации
+        commonChibisBtn.addEventListener('click', function() {
+            mainScreen.classList.add('hidden');
+            commonCollectionScreen.classList.remove('hidden');
+            commonCollectionScreen.style.opacity = '1';
+            loadCommonCollection();
+        });
+        
+        secretChibisBtn.addEventListener('click', function() {
+            if (!userData.has_secret) {
+                return; // Не показываем, если нет секретных чибиков
+            }
+            mainScreen.classList.add('hidden');
+            secretCollectionScreen.classList.remove('hidden');
+            secretCollectionScreen.style.opacity = '1';
+            loadSecretCollection();
+        });
+        
+        backButtonCommon.addEventListener('click', function() {
+            commonCollectionScreen.classList.add('hidden');
+            mainScreen.classList.remove('hidden');
+            mainScreen.style.opacity = '1';
+        });
+        
+        backButtonSecret.addEventListener('click', function() {
+            secretCollectionScreen.classList.add('hidden');
+            mainScreen.classList.remove('hidden');
+            mainScreen.style.opacity = '1';
+        });
+        
+        function simulateRealisticLoading() {
+            const speed = 0.5 + Math.random() * 1.5;
+            const shouldLag = Math.random() < 0.2;
+            const lagDuration = shouldLag ? 300 + Math.random() * 700 : 0;
+            
+            if (shouldLag && progress > 20 && progress < 90) {
+                setTimeout(() => {
+                    progress += speed;
+                    progressBar.style.width = progress + '%';
+                    
+                    if (progress < 100) {
+                        setTimeout(simulateRealisticLoading, 50);
+                    } else {
+                        finishLoading();
+                    }
+                }, lagDuration);
+            } else {
+                progress += speed;
+                progressBar.style.width = progress + '%';
+                
+                if (progress < 100) {
+                    setTimeout(simulateRealisticLoading, 50);
+                } else {
+                    finishLoading();
+                }
+            }
+        }
+        
+        async function finishLoading() {
+            loadingScreen.style.opacity = '0';
+            
+            setTimeout(async () => {
+                try {
+                    // Получаем telegramId из Telegram WebApp
+                    let telegramId = null;
+                    if (window.Telegram && window.Telegram.WebApp) {
+                        telegramId = Telegram.WebApp.initDataUnsafe.user.id;
+                        loadingText.textContent = 'Загрузка коллекции...';
+                        
+                        // Загружаем данные пользователя
+                        userData = await fetchUserData(telegramId);
+                        allCommonChibis = userData.all_common_chibis;
+                        allSecretChibis = userData.all_secret_chibis;
+                        
+                        // Обновляем интерфейс
+                        updateMainScreen();
+                    } else {
+                        // Режим демо (без Telegram)
+                        userData = {
+                            common_chibis: ['Грит', 'Таррек', 'Крилл'],
+                            secret_chibis: [],
+                            display_common: 'Грит',
+                            display_secret: null,
+                            has_secret: false,
+                            all_common_chibis: ['Грит', 'Таррек', 'Крилл', 'Гето', 'Дин', 'Боксо', 'Мерин', 'Хрило', 'Гомадо', 'Грож', 'Грирт', 'Тарр'],
+                            all_secret_chibis: []
+                        };
+                        allCommonChibis = userData.all_common_chibis;
+                        updateMainScreen();
+                    }
+                    
+                    mainScreen.style.opacity = '1';
+                    mainScreen.classList.remove('hidden');
+                    
+                    setTimeout(() => {
+                        loadingScreen.style.display = 'none';
+                    }, 800);
+                    
+                } catch (error) {
+                    console.error('Ошибка инициализации:', error);
+                    loadingText.textContent = 'Ошибка загрузки. Обновите страницу.';
+                    // Можно показать сообщение об ошибке пользователю
+                }
+            }, 500);
+        }
+        
+        let progress = 0;
+        
+        // Инициализация при загрузке страницы
+        window.onload = function() {
+            // Инициализируем Telegram WebApp
+            if (window.Telegram && Telegram.WebApp) {
+                Telegram.WebApp.ready();
+                Telegram.WebApp.expand();
+            }
+            
+            setTimeout(simulateRealisticLoading, 500);
+        };
+    </script>
+</body>
+</html>
