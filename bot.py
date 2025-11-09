@@ -6,6 +6,7 @@ import os
 import logging
 import threading
 import time
+import math
 from flask import Flask
 from datetime import datetime, timedelta
 from pymongo import MongoClient
@@ -554,6 +555,84 @@ class ChibiBot:
                 return False
         return True
 
+    def process_dice_bet(self, message):
+        """Обработка ставки в кости"""
+        try:
+            telegram_id_str = str(message.from_user.id)
+            
+            if self.is_banned(message.from_user.id):
+                self.bot.reply_to(message, "🤡 *Ты в бане!*", parse_mode='Markdown')
+                return
+                
+            if not self.check_user_started(message.from_user.id):
+                self.send_start_suggestion(message.chat.id)
+                return
+
+            # Проверяем, что это ответ на сообщение бота с костями
+            if not message.reply_to_message or message.reply_to_message.from_user.id != self.bot.get_me().id:
+                return
+
+            # Проверяем, что в сообщении есть число
+            try:
+                bet = int(message.text)
+            except ValueError:
+                self.bot.reply_to(message, "❌ *Ставка должна быть числом!*", parse_mode='Markdown')
+                return
+
+            if bet < 1:
+                self.bot.reply_to(message, "❌ *Ставка должна быть больше 0!*", parse_mode='Markdown')
+                return
+
+            # Проверяем баланс
+            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+            if not user_data:
+                self.send_start_suggestion(message.chat.id)
+                return
+
+            coins = user_data.get('coins', 0)
+            if coins < bet:
+                self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {coins}💰", parse_mode='Markdown')
+                return
+
+            # Списываем ставку
+            new_coins = coins - bet
+            self.users_collection.update_one(
+                {"telegram_id": telegram_id_str},
+                {"$set": {"coins": new_coins}}
+            )
+
+            # Бросаем кость
+            dice_roll = random.randint(1, 6)
+            self.bot.send_dice(message.chat.id, emoji='🎲')
+
+            time.sleep(2)  # Ждем анимацию кости
+
+            # Проверяем результат
+            if dice_roll in [2, 4, 6]:  # Выигрыш
+                win_amount = math.ceil(bet * 1.7)
+                total_coins = new_coins + win_amount
+                
+                self.users_collection.update_one(
+                    {"telegram_id": telegram_id_str},
+                    {"$set": {"coins": total_coins}}
+                )
+
+                win_text = f"""*👽 Черт! {message.from_user.first_name}, тебя сегодня повезло… Забирай свой выигрыш!*
+_Поздравляю, ты обыграл дилера!_
+_•••••••••••••••_
++ 💰*{win_amount}* коинов"""
+
+                self.bot.send_message(message.chat.id, win_text, parse_mode='Markdown')
+            else:  # Проигрыш
+                lose_text = f"""*👽 Ха-ха! {message.from_user.first_name}, кажется ты слил!*
+_Ты проиграл, все честно. Ставку уже не вернуть_"""
+
+                self.bot.send_message(message.chat.id, lose_text, parse_mode='Markdown')
+
+        except Exception as e:
+            logger.error(f"Ошибка в process_dice_bet: {e}")
+            self.bot.reply_to(message, "⛓️‍💥* Что-то пошло не так!*", parse_mode='Markdown')
+
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
@@ -605,6 +684,49 @@ class ChibiBot:
                     
             except Exception as e:
                 logger.error(f"Ошибка в start: {e}")
+                sent_message = self.bot.send_message(
+                    message.chat.id,
+                    "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                    parse_mode='Markdown'
+                )
+                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+
+        @self.bot.message_handler(commands=['dice'])
+        def dice_handler(message):
+            if message.chat.type != 'private':
+                self.bot.reply_to(message, "🎲 *Игра доступна только в личке!*", parse_mode='Markdown')
+                return
+                
+            try:
+                if self.is_banned(message.from_user.id):
+                    days_left = self.get_ban_time_left(message.from_user.id)
+                    sent_message = self.bot.send_message(
+                        message.chat.id,
+                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                        parse_mode='Markdown'
+                    )
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    return
+                    
+                if not self.check_user_started(message.from_user.id):
+                    self.send_start_suggestion(message.chat.id)
+                    return
+                    
+                dice_text = """*🎲 Добро пожаловать в подпольное казино!* 
+_Ответь на это сообщение своей ставкой, и испытай удачу!_ 
+_•••••••••••••••_
+_1,3,5_ - проигрыш 
+_2,4,6_ - выигрыш (х1.7)"""
+
+                sent_message = self.bot.send_message(
+                    message.chat.id,
+                    dice_text,
+                    parse_mode='Markdown'
+                )
+                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                
+            except Exception as e:
+                logger.error(f"Ошибка в dice: {e}")
                 sent_message = self.bot.send_message(
                     message.chat.id,
                     "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
@@ -1215,6 +1337,16 @@ class ChibiBot:
                     parse_mode='Markdown'
                 )
                 self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+
+        @self.bot.message_handler(func=lambda message: True, content_types=['text'])
+        def text_handler(message):
+            """Обработка текстовых сообщений для игры в кости"""
+            if message.chat.type == 'private' and message.reply_to_message:
+                # Проверяем, что это ответ на сообщение бота с костями
+                reply_text = message.reply_to_message.text or ""
+                if "подпольное казино" in reply_text:
+                    self.process_dice_bet(message)
+                    return
 
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
