@@ -7,10 +7,11 @@ import logging
 import threading
 import time
 import math
-from flask import Flask
+from flask import Flask, jsonify, request
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 from bson import ObjectId
+import json
 
 from config import BOT_CONFIG, BOT_TEXTS
 
@@ -447,6 +448,19 @@ class ChibiBot:
         
         return sorted(chibi_names)
 
+    def get_all_secret_chibis(self):
+        """Получить список всех секретных чибиков"""
+        chibi_folder = "chibis/secret"
+        
+        if not os.path.exists(chibi_folder):
+            logger.error(f"Папка {chibi_folder} не найдена!")
+            return []
+        
+        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
+        chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
+        
+        return sorted(chibi_names)
+
     def get_chibi_count(self, telegram_id, chibi_name):
         telegram_id_str = str(telegram_id)
         user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
@@ -569,6 +583,54 @@ class ChibiBot:
                 self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
                 return False
         return True
+
+    def get_user_collection_data(self, telegram_id):
+        """Получить данные коллекции пользователя для веб-интерфейса"""
+        try:
+            telegram_id_str = str(telegram_id)
+            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+            
+            if not user_data:
+                return None
+            
+            # Получаем все чибики пользователя
+            user_chibis = user_data.get('chibis', [])
+            
+            # Получаем список всех обычных чибиков
+            common_chibis = self.get_all_common_chibis()
+            
+            # Получаем список всех секретных чибиков
+            secret_chibis = self.get_all_secret_chibis()
+            
+            # Определяем, какие чибики есть у пользователя
+            user_common_chibis = []
+            user_secret_chibis = []
+            
+            for chibi in user_chibis:
+                if chibi in common_chibis:
+                    user_common_chibis.append(chibi)
+                elif chibi in secret_chibis:
+                    user_secret_chibis.append(chibi)
+            
+            # Выбираем случайного обычного чибика для отображения
+            random_common = random.choice(user_common_chibis) if user_common_chibis else None
+            first_secret = user_secret_chibis[0] if user_secret_chibis else None
+            
+            return {
+                'user_id': user_data.get('user_id'),
+                'first_name': user_data.get('first_name', 'Пользователь'),
+                'common_chibis': user_common_chibis,
+                'secret_chibis': user_secret_chibis,
+                'all_common_chibis': common_chibis,
+                'all_secret_chibis': secret_chibis,
+                'display_common': random_common,
+                'display_secret': first_secret,
+                'has_secret': len(user_secret_chibis) > 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения данных коллекции: {e}")
+            return None
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -2070,16 +2132,50 @@ if __name__ == "__main__":
         print("❌ Токен не найден!")
         exit(1)
     
+    bot_instance = None
+    
     if "RENDER" in os.environ:
         app = Flask(__name__)
+        
         @app.route('/')
         def home():
             return "🤖 Чиби-бот работает с MongoDB!"
+        
+        @app.route('/api/user/<telegram_id>')
+        def get_user_data(telegram_id):
+            if not bot_instance:
+                return jsonify({'error': 'Bot not initialized'}), 500
+            
+            user_data = bot_instance.get_user_collection_data(telegram_id)
+            if user_data:
+                return jsonify(user_data)
+            else:
+                return jsonify({'error': 'User not found'}), 404
+        
+        @app.route('/api/chibi/image/<chibi_name>')
+        def get_chibi_image(chibi_name):
+            """Получить URL изображения чибика"""
+            # Проверяем в обычных чибиках
+            common_path = f"chibis/common/{chibi_name.replace(' ', '_')}.png"
+            secret_path = f"chibis/secret/{chibi_name.replace(' ', '_')}.png"
+            
+            if os.path.exists(common_path):
+                # В продакшене здесь должен быть URL до вашего CDN или статики
+                return jsonify({'url': f'/static/chibis/common/{chibi_name.replace(" ", "_")}.png'})
+            elif os.path.exists(secret_path):
+                return jsonify({'url': f'/static/chibis/secret/{chibi_name.replace(" ", "_")}.png'})
+            else:
+                return jsonify({'error': 'Chibi not found'}), 404
+        
         def run_flask():
             app.run(host='0.0.0.0', port=PORT)
+        
         flask_thread = threading.Thread(target=run_flask)
         flask_thread.daemon = True
         flask_thread.start()
     
-    bot = ChibiBot(token)
-    bot.run()
+    # Создаем экземпляр бота после определения Flask роутов
+    bot_instance = ChibiBot(token)
+    bot_instance.run()
+
+
