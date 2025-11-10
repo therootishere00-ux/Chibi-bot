@@ -98,24 +98,20 @@
             transition: opacity 0.8s ease;
             z-index: 5;
             padding: 20px;
-            padding-top: 90px;
+            padding-top: 105px; /* 85px + 20px стандартного паддинга */
             box-sizing: border-box;
             overflow-y: auto;
         }
 
-        .header-section {
+        .header-container {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            width: 100%;
-            position: fixed;
-            top: 0;
-            left: 0;
-            padding: 20px;
-            box-sizing: border-box;
-            background-color: #000000;
-            z-index: 100;
-            height: 70px;
+            position: absolute;
+            top: 85px;
+            left: 20px;
+            right: 20px;
+            z-index: 6;
         }
 
         .main-logo {
@@ -140,6 +136,7 @@
             color: white;
             font-size: 18px;
             font-weight: 600;
+            margin-top: 30px;
             margin-bottom: 15px;
             align-self: flex-start;
         }
@@ -154,12 +151,11 @@
             width: 100%;
             box-sizing: border-box;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: background-color 0.2s ease;
         }
 
         .item-card:active {
             background-color: #2a2a2a;
-            transform: scale(0.98);
         }
 
         .item-image {
@@ -171,7 +167,6 @@
             display: flex;
             justify-content: center;
             align-items: center;
-            flex-shrink: 0;
         }
 
         .item-image img {
@@ -207,7 +202,6 @@
             border-radius: 12px;
             overflow: hidden;
             margin-right: 15px;
-            flex-shrink: 0;
         }
 
         .article-image img {
@@ -231,7 +225,6 @@
             padding: 6px 12px;
             border: 1px solid #FFD951;
             border-radius: 8px;
-            flex-shrink: 0;
         }
 
         .collection-screen {
@@ -247,7 +240,7 @@
             transition: opacity 0.3s ease;
             z-index: 8;
             padding: 20px;
-            padding-top: 90px;
+            padding-top: 105px; /* 85px + 20px стандартного паддинга */
             box-sizing: border-box;
             overflow-y: auto;
         }
@@ -267,23 +260,10 @@
 
         .chibi-grid {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 12px;
-            max-height: calc(100vh - 160px);
+            max-height: calc(100vh - 180px);
             overflow-y: auto;
-            padding-bottom: 20px;
-        }
-
-        @media (min-width: 480px) {
-            .chibi-grid {
-                grid-template-columns: repeat(3, 1fr);
-            }
-        }
-
-        @media (min-width: 768px) {
-            .chibi-grid {
-                grid-template-columns: repeat(4, 1fr);
-            }
         }
 
         .chibi-card {
@@ -295,11 +275,6 @@
             align-items: center;
             aspect-ratio: 1;
             position: relative;
-            transition: transform 0.2s ease;
-        }
-
-        .chibi-card:active {
-            transform: scale(0.95);
         }
 
         .chibi-image {
@@ -368,7 +343,7 @@
     </div>
 
     <div class="main-screen" id="mainScreen">
-        <div class="header-section">
+        <div class="header-container">
             <img src="https://i.ibb.co/zTB331HR/image.png" alt="Логотип" class="main-logo">
             <div class="user-avatar" id="userAvatar">
                 TG
@@ -407,11 +382,8 @@
     </div>
 
     <div class="collection-screen hidden" id="commonCollectionScreen">
-        <div class="header-section">
+        <div class="header">
             <div class="header-title">Обычные чибики</div>
-            <div class="user-avatar" id="userAvatarCollection">
-                TG
-            </div>
         </div>
         
         <div class="chibi-grid" id="commonChibiGrid">
@@ -419,11 +391,8 @@
     </div>
 
     <div class="collection-screen hidden" id="secretCollectionScreen">
-        <div class="header-section">
+        <div class="header">
             <div class="header-title">Секретные чибики</div>
-            <div class="user-avatar" id="userAvatarSecret">
-                TG
-            </div>
         </div>
         
         <div class="chibi-grid" id="secretChibiGrid">
@@ -435,8 +404,6 @@
         const loadingScreen = document.getElementById('loadingScreen');
         const mainScreen = document.getElementById('mainScreen');
         const userAvatar = document.getElementById('userAvatar');
-        const userAvatarCollection = document.getElementById('userAvatarCollection');
-        const userAvatarSecret = document.getElementById('userAvatarSecret');
         const commonChibisBtn = document.getElementById('commonChibisBtn');
         const secretChibisBtn = document.getElementById('secretChibisBtn');
         const commonCollectionScreen = document.getElementById('commonCollectionScreen');
@@ -455,25 +422,15 @@
         let allCommonChibis = [];
         let allSecretChibis = [];
         
-        function vibrate() {
-            if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
-                Telegram.WebApp.HapticFeedback.impactOccurred('light');
-            }
-        }
-        
         function initTelegramWebApp() {
             if (window.Telegram && window.Telegram.WebApp) {
                 Telegram.WebApp.ready();
                 
                 const user = Telegram.WebApp.initDataUnsafe.user;
                 if (user) {
-                    const avatarHTML = user.photo_url 
-                        ? `<img src="${user.photo_url}" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">`
-                        : 'TG';
-                    
-                    userAvatar.innerHTML = avatarHTML;
-                    userAvatarCollection.innerHTML = avatarHTML;
-                    userAvatarSecret.innerHTML = avatarHTML;
+                    if (user.photo_url) {
+                        userAvatar.innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">`;
+                    }
                     
                     Telegram.WebApp.setHeaderColor('#000000');
                     Telegram.WebApp.setBackgroundColor('#000000');
@@ -486,7 +443,6 @@
         }
         
         function handleBackButton() {
-            vibrate();
             if (!commonCollectionScreen.classList.contains('hidden')) {
                 showMainScreen();
             } else if (!secretCollectionScreen.classList.contains('hidden')) {
@@ -506,7 +462,6 @@
         }
         
         function showCollectionScreen(screen) {
-            vibrate();
             mainScreen.classList.add('hidden');
             screen.classList.remove('hidden');
             screen.style.opacity = '1';
