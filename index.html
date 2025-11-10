@@ -98,14 +98,29 @@
             transition: opacity 0.8s ease;
             z-index: 5;
             padding: 20px;
+            padding-top: 60px;
             box-sizing: border-box;
             overflow-y: auto;
         }
 
-        .user-avatar {
+        .header-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
             position: absolute;
             top: 20px;
-            right: 20px;
+            left: 0;
+            padding: 0 20px;
+            box-sizing: border-box;
+        }
+
+        .main-logo {
+            width: 120px;
+            height: auto;
+        }
+
+        .user-avatar {
             width: 50px;
             height: 50px;
             border-radius: 17px;
@@ -118,18 +133,11 @@
             font-size: 12px;
         }
 
-        .main-logo {
-            width: 120px;
-            height: auto;
-            margin-top: 80px;
-            align-self: center;
-        }
-
         .subtitle {
             color: white;
             font-size: 18px;
             font-weight: 600;
-            margin-top: 30px;
+            margin-top: 80px;
             margin-bottom: 15px;
             align-self: flex-start;
         }
@@ -233,6 +241,7 @@
             transition: opacity 0.3s ease;
             z-index: 8;
             padding: 20px;
+            padding-top: 60px;
             box-sizing: border-box;
             overflow-y: auto;
         }
@@ -254,7 +263,7 @@
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 12px;
-            max-height: calc(100vh - 120px);
+            max-height: calc(100vh - 140px);
             overflow-y: auto;
         }
 
@@ -335,11 +344,12 @@
     </div>
 
     <div class="main-screen" id="mainScreen">
-        <div class="user-avatar" id="userAvatar">
-            TG
+        <div class="header-section">
+            <img src="https://i.ibb.co/zTB331HR/image.png" alt="Логотип" class="main-logo">
+            <div class="user-avatar" id="userAvatar">
+                TG
+            </div>
         </div>
-        
-        <img src="https://i.ibb.co/zTB331HR/image.png" alt="Логотип" class="main-logo">
         
         <div class="subtitle">Чибики</div>
         
