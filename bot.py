@@ -22,6 +22,9 @@ class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
         
+        # Тестовые аккаунты (админы) - ДОЛЖНЫ БЫТЬ ОБЪЯВЛЕНЫ ПЕРВЫМИ
+        self.test_users = ['tmkazavr', 'ya_admin7']
+        
         # Инициализация Flask для мини-приложения
         if "RENDER" in os.environ:
             self.app = Flask(__name__)
@@ -55,9 +58,6 @@ class ChibiBot:
         self.gift_selections = {}
         self.message_owners = {}
         
-        # Тестовые аккаунты (админы)
-        self.test_users = ['tmkazavr', 'ya_admin7']
-        
     def _scan_chibis_folder(self, folder_path):
         """Сканирует папку с чибиками и возвращает список имен"""
         if not os.path.exists(folder_path):
@@ -90,6 +90,8 @@ class ChibiBot:
                     }}
                 )
                 logger.info(f"✅ Админ {username} инициализирован с полной коллекцией")
+            else:
+                logger.info(f"ℹ️ Админ {username} еще не зарегистрирован в боте")
             
     def _init_collections(self):
         """Инициализация коллекций и индексов"""
@@ -99,6 +101,8 @@ class ChibiBot:
             
     def is_test_user(self, username):
         return username in self.test_users if username else False
+        
+    # ... остальной код без изменений ...
         
     def is_banned(self, user_id):
         user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
