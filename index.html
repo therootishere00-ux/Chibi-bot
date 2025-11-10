@@ -103,6 +103,18 @@
             overflow-y: auto;
         }
 
+        /* Скрываем скроллбары во всем приложении */
+        .main-screen::-webkit-scrollbar,
+        .chibi-grid::-webkit-scrollbar {
+            display: none;
+        }
+
+        .main-screen,
+        .chibi-grid {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
         .header-container {
             display: flex;
             justify-content: space-between;
@@ -152,6 +164,7 @@
             box-sizing: border-box;
             cursor: pointer;
             transition: background-color 0.2s ease;
+            position: relative;
         }
 
         .item-card:active {
@@ -184,6 +197,16 @@
             font-weight: 600;
             font-size: 16px;
             color: #fff;
+        }
+
+        .collection-percentage {
+            position: absolute;
+            right: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+            font-weight: 500;
         }
 
         .article-card {
@@ -267,26 +290,19 @@
             flex: 1;
         }
 
+        .collection-progress {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+            font-weight: 500;
+            margin-left: 10px;
+        }
+
         .chibi-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 12px;
             max-height: calc(100vh - 180px);
             overflow-y: auto;
-        }
-
-        .chibi-grid::-webkit-scrollbar {
-            width: 4px;
-        }
-
-        .chibi-grid::-webkit-scrollbar-track {
-            background: #1a1a1a;
-            border-radius: 2px;
-        }
-
-        .chibi-grid::-webkit-scrollbar-thumb {
-            background: #FFD951;
-            border-radius: 2px;
         }
 
         .chibi-card {
@@ -355,6 +371,32 @@
             text-align: center;
         }
 
+        .unknown-chibi {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #1a1a1a;
+            border-radius: 15px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .unknown-icon {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .unknown-text {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 9px;
+            text-align: center;
+        }
+
         .hidden {
             display: none !important;
         }
@@ -387,6 +429,7 @@
             <div class="item-content">
                 <div class="item-title">Обычные</div>
             </div>
+            <div class="collection-percentage" id="commonPercentage">0%</div>
         </div>
         
         <div class="item-card" id="secretChibisBtn">
@@ -405,13 +448,16 @@
                 <img src="https://i.ibb.co/sJVz9tH3/IMG-6876.png" alt="Статья">
             </div>
             <div class="article-title">Как работают кости?</div>
-            <a href="https://example.com" target="_blank" class="article-link">Читать</a>
+            <a href="https://telegra.ph/Kak-rabotayut-kosti--CHIBIKI-11-10" target="_blank" class="article-link">Читать</a>
         </div>
     </div>
 
     <div class="collection-screen hidden" id="commonCollectionScreen">
         <div class="header">
-            <div class="header-title">Обычные чибики</div>
+            <div class="header-title">
+                Обычные чибики
+                <span class="collection-progress" id="commonProgressText">0%</span>
+            </div>
         </div>
         
         <div class="chibi-grid" id="commonChibiGrid">
@@ -441,6 +487,8 @@
         const commonChibiImage = document.getElementById('commonChibiImage');
         const secretChibiImage = document.getElementById('secretChibiImage');
         const secretTitle = document.getElementById('secretTitle');
+        const commonPercentage = document.getElementById('commonPercentage');
+        const commonProgressText = document.getElementById('commonProgressText');
         
         let userData = {
             collectedChibis: [],
@@ -527,6 +575,19 @@
             }
         }
         
+        function calculateCollectionPercentage() {
+            if (allCommonChibis.length === 0) return 0;
+            const collectedCount = userData.collectedChibis.length;
+            const percentage = Math.round((collectedCount / allCommonChibis.length) * 100);
+            return percentage;
+        }
+        
+        function updateCollectionProgress() {
+            const percentage = calculateCollectionPercentage();
+            commonPercentage.textContent = `${percentage}%`;
+            commonProgressText.textContent = `${percentage}%`;
+        }
+        
         async function loadUserCollection() {
             try {
                 if (window.Telegram && window.Telegram.WebApp) {
@@ -551,6 +612,7 @@
                             allCommonChibis = collection.all_common || [];
                             allSecretChibis = collection.all_secret || [];
                             updateMainScreenImages();
+                            updateCollectionProgress();
                         } else {
                             console.error('Ошибка HTTP:', response.status);
                         }
@@ -590,22 +652,35 @@
             const card = document.createElement('div');
             card.className = 'chibi-card';
             
-            const imageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/${rarity}/${chibiName.replace(/ /g, '_')}.png`;
-            
-            card.innerHTML = `
-                <div class="chibi-image">
-                    <img src="${imageUrl}" alt="${chibiName}" style="opacity: ${isCollected ? '1' : '0.3'}" onerror="this.style.display='none'">
-                </div>
-                <div class="chibi-name">${chibiName}</div>
-                ${!isCollected ? `
-                    <div class="locked-overlay">
-                        <div class="lock-icon">
-                            <i class="fas fa-lock"></i>
+            if (rarity === 'secret' && !isCollected) {
+                // Для неполученных секретных чибиков показываем "???"
+                card.innerHTML = `
+                    <div class="unknown-chibi">
+                        <div class="unknown-icon">
+                            <i class="fas fa-question"></i>
                         </div>
-                        <div class="locked-text">Не получен</div>
+                        <div class="unknown-text">???</div>
                     </div>
-                ` : ''}
-            `;
+                `;
+            } else {
+                // Для обычных чибиков и полученных секретных
+                const imageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/${rarity}/${chibiName.replace(/ /g, '_')}.png`;
+                
+                card.innerHTML = `
+                    <div class="chibi-image">
+                        <img src="${imageUrl}" alt="${chibiName}" style="opacity: ${isCollected ? '1' : '0.3'}" onerror="this.style.display='none'">
+                    </div>
+                    <div class="chibi-name">${chibiName}</div>
+                    ${!isCollected ? `
+                        <div class="locked-overlay">
+                            <div class="lock-icon">
+                                <i class="fas fa-lock"></i>
+                            </div>
+                            <div class="locked-text">Не получен</div>
+                        </div>
+                    ` : ''}
+                `;
+            }
             
             card.addEventListener('click', function() {
                 vibrate();
@@ -623,12 +698,16 @@
                 const chibiCard = createChibiCard(chibiName, isCollected, 'common');
                 commonChibiGrid.appendChild(chibiCard);
             });
+            
+            updateCollectionProgress();
         }
         
         function loadSecretCollection() {
             secretChibiGrid.innerHTML = '';
             console.log('Загрузка секретных чибиков. Всего:', allSecretChibis.length);
             
+            // Для секретных показываем только те, которые у пользователя есть
+            // и "???" для остальных
             allSecretChibis.forEach(chibiName => {
                 const isCollected = userData.secretChibis.includes(chibiName);
                 const chibiCard = createChibiCard(chibiName, isCollected, 'secret');
