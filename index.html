@@ -263,6 +263,8 @@
             color: white;
             font-size: 18px;
             font-weight: 600;
+            text-align: center;
+            flex: 1;
         }
 
         .chibi-grid {
@@ -271,6 +273,20 @@
             gap: 12px;
             max-height: calc(100vh - 180px);
             overflow-y: auto;
+        }
+
+        .chibi-grid::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .chibi-grid::-webkit-scrollbar-track {
+            background: #1a1a1a;
+            border-radius: 2px;
+        }
+
+        .chibi-grid::-webkit-scrollbar-thumb {
+            background: #FFD951;
+            border-radius: 2px;
         }
 
         .chibi-card {
@@ -425,7 +441,6 @@
         const commonChibiImage = document.getElementById('commonChibiImage');
         const secretChibiImage = document.getElementById('secretChibiImage');
         const secretTitle = document.getElementById('secretTitle');
-        const articleLink = document.querySelector('.article-link');
         
         let userData = {
             collectedChibis: [],
@@ -435,24 +450,24 @@
         let allCommonChibis = [];
         let allSecretChibis = [];
         
-        // Функция для легкой вибрации через Telegram Web App
+        // ВСТРОЕННЫЙ URL БОТА
+        const BOT_API_URL = 'https://chibi-bot-3d4x.onrender.com';
+        
         function vibrate() {
             if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
                 Telegram.WebApp.HapticFeedback.impactOccurred('light');
             }
         }
         
-        // Функция для проверки времени последнего запуска
         function shouldShowLoading() {
             const lastLaunch = localStorage.getItem('lastLaunchTime');
             if (!lastLaunch) return true;
             
             const currentTime = Date.now();
             const timeDiff = currentTime - parseInt(lastLaunch);
-            return timeDiff > 20000; // 20 секунд
+            return timeDiff > 30000;
         }
         
-        // Функция для сохранения времени запуска
         function saveLaunchTime() {
             localStorage.setItem('lastLaunchTime', Date.now().toString());
         }
@@ -470,6 +485,7 @@
                     Telegram.WebApp.setHeaderColor('#000000');
                     Telegram.WebApp.setBackgroundColor('#000000');
                     
+                    // ОБРАБОТКА КНОПКИ BACK В ТЕЛЕГРАМ
                     Telegram.WebApp.BackButton.onClick(handleBackButton);
                 }
                 
@@ -478,7 +494,8 @@
         }
         
         function handleBackButton() {
-            vibrate(); // Вибрация при нажатии назад
+            vibrate();
+            
             if (!commonCollectionScreen.classList.contains('hidden')) {
                 showMainScreen();
             } else if (!secretCollectionScreen.classList.contains('hidden')) {
@@ -492,17 +509,19 @@
             mainScreen.classList.remove('hidden');
             mainScreen.style.opacity = '1';
             
+            // Скрываем кнопку BACK когда на главном экране
             if (window.Telegram && window.Telegram.WebApp) {
                 Telegram.WebApp.BackButton.hide();
             }
         }
         
         function showCollectionScreen(screen) {
-            vibrate(); // Вибрация при переходе в коллекцию
+            vibrate();
             mainScreen.classList.add('hidden');
             screen.classList.remove('hidden');
             screen.style.opacity = '1';
             
+            // Показываем кнопку BACK когда в коллекции
             if (window.Telegram && window.Telegram.WebApp) {
                 Telegram.WebApp.BackButton.show();
             }
@@ -513,7 +532,9 @@
                 if (window.Telegram && window.Telegram.WebApp) {
                     const user = Telegram.WebApp.initDataUnsafe.user;
                     if (user) {
-                        const response = await fetch('/get_user_collection', {
+                        console.log('Загрузка коллекции для пользователя:', user.id);
+                        
+                        const response = await fetch(`${BOT_API_URL}/get_user_collection`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -523,9 +544,15 @@
                         
                         if (response.ok) {
                             const collection = await response.json();
+                            console.log('Получена коллекция:', collection);
+                            
                             userData.collectedChibis = collection.common || [];
                             userData.secretChibis = collection.secret || [];
+                            allCommonChibis = collection.all_common || [];
+                            allSecretChibis = collection.all_secret || [];
                             updateMainScreenImages();
+                        } else {
+                            console.error('Ошибка HTTP:', response.status);
                         }
                     }
                 }
@@ -535,16 +562,25 @@
         }
         
         function updateMainScreenImages() {
+            // Обновляем изображение обычных чибиков
             if (userData.collectedChibis.length > 0) {
                 const randomCommon = userData.collectedChibis[Math.floor(Math.random() * userData.collectedChibis.length)];
-                commonChibiImage.src = `https://raw.githubusercontent.com/your-repo/main/chibis/common/${randomCommon}.png`;
+                const commonImageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/common/${randomCommon.replace(/ /g, '_')}.png`;
+                commonChibiImage.src = commonImageUrl;
+                console.log('Установлено изображение обычного чибика:', commonImageUrl);
+            } else {
+                // Заглушка если нет обычных чибиков
+                commonChibiImage.src = 'https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/common/placeholder.png';
             }
             
+            // Обновляем изображение секретных чибиков
             if (userData.secretChibis.length > 0) {
                 const randomSecret = userData.secretChibis[Math.floor(Math.random() * userData.secretChibis.length)];
-                secretChibiImage.src = `https://raw.githubusercontent.com/your-repo/main/chibis/secret/${randomSecret}.png`;
+                const secretImageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/secret/${randomSecret.replace(/ /g, '_')}.png`;
+                secretChibiImage.src = secretImageUrl;
                 secretTitle.textContent = 'Секретные';
                 secretChibisBtn.style.display = 'flex';
+                console.log('Установлено изображение секретного чибика:', secretImageUrl);
             } else {
                 secretChibisBtn.style.display = 'none';
             }
@@ -554,11 +590,11 @@
             const card = document.createElement('div');
             card.className = 'chibi-card';
             
-            const imageUrl = `https://raw.githubusercontent.com/your-repo/main/chibis/${rarity}/${chibiName}.png`;
+            const imageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/${rarity}/${chibiName.replace(/ /g, '_')}.png`;
             
             card.innerHTML = `
                 <div class="chibi-image">
-                    <img src="${imageUrl}" alt="${chibiName}" style="opacity: ${isCollected ? '1' : '0.3'}">
+                    <img src="${imageUrl}" alt="${chibiName}" style="opacity: ${isCollected ? '1' : '0.3'}" onerror="this.style.display='none'">
                 </div>
                 <div class="chibi-name">${chibiName}</div>
                 ${!isCollected ? `
@@ -571,7 +607,6 @@
                 ` : ''}
             `;
             
-            // Добавляем вибрацию при нажатии на карточку чибика
             card.addEventListener('click', function() {
                 vibrate();
             });
@@ -581,6 +616,7 @@
         
         function loadCommonCollection() {
             commonChibiGrid.innerHTML = '';
+            console.log('Загрузка обычных чибиков. Всего:', allCommonChibis.length);
             
             allCommonChibis.forEach(chibiName => {
                 const isCollected = userData.collectedChibis.includes(chibiName);
@@ -591,6 +627,7 @@
         
         function loadSecretCollection() {
             secretChibiGrid.innerHTML = '';
+            console.log('Загрузка секретных чибиков. Всего:', allSecretChibis.length);
             
             allSecretChibis.forEach(chibiName => {
                 const isCollected = userData.secretChibis.includes(chibiName);
@@ -599,7 +636,7 @@
             });
         }
         
-        // Добавляем вибрацию при нажатии на кнопки
+        // Обработчики событий
         commonChibisBtn.addEventListener('click', function() {
             vibrate();
             showCollectionScreen(commonCollectionScreen);
@@ -612,17 +649,18 @@
             loadSecretCollection();
         });
         
-        // Убираем вибрацию для кнопки "Читать"
-        articleLink.addEventListener('click', function(e) {
-            // Не вызываем vibrate() для этой кнопки
-        });
-        
         async function loadChibiLists() {
             try {
-                const response = await fetch('/get_all_chibis');
-                const data = await response.json();
-                allCommonChibis = data.common || [];
-                allSecretChibis = data.secret || [];
+                console.log('Загрузка списков чибиков...');
+                const response = await fetch(`${BOT_API_URL}/get_all_chibis`);
+                if (response.ok) {
+                    const data = await response.json();
+                    allCommonChibis = data.common || [];
+                    allSecretChibis = data.secret || [];
+                    console.log('Загружено обычных:', allCommonChibis.length, 'секретных:', allSecretChibis.length);
+                } else {
+                    console.error('Ошибка загрузки списков чибиков:', response.status);
+                }
             } catch (error) {
                 console.error('Ошибка загрузки списка чибиков:', error);
             }
@@ -657,7 +695,7 @@
         }
         
         function finishLoading() {
-            saveLaunchTime(); // Сохраняем время запуска
+            saveLaunchTime();
             loadingScreen.style.opacity = '0';
             
             setTimeout(() => {
@@ -670,17 +708,16 @@
         }
         
         function skipLoading() {
-            // Пропускаем загрузку, если прошло меньше 20 секунд
             loadingScreen.style.display = 'none';
             mainScreen.style.opacity = '1';
-            saveLaunchTime(); // Все равно сохраняем время запуска
+            saveLaunchTime();
         }
         
         let progress = 0;
         window.onload = async function() {
+            console.log('Мини-приложение загружено');
             initTelegramWebApp();
             
-            // Проверяем, нужно ли показывать экран загрузки
             if (shouldShowLoading()) {
                 await loadChibiLists();
                 await loadUserCollection();
