@@ -435,10 +435,10 @@
         let allCommonChibis = [];
         let allSecretChibis = [];
         
-        // Функция для легкой вибрации
+        // Функция для легкой вибрации через Telegram Web App
         function vibrate() {
-            if (navigator.vibrate) {
-                navigator.vibrate(10); // 10ms вибрация
+            if (window.Telegram && window.Telegram.WebApp && Telegram.WebApp.HapticFeedback) {
+                Telegram.WebApp.HapticFeedback.impactOccurred('light');
             }
         }
         
@@ -571,6 +571,11 @@
                 ` : ''}
             `;
             
+            // Добавляем вибрацию при нажатии на карточку чибика
+            card.addEventListener('click', function() {
+                vibrate();
+            });
+            
             return card;
         }
         
@@ -609,7 +614,7 @@
         
         // Убираем вибрацию для кнопки "Читать"
         articleLink.addEventListener('click', function(e) {
-            e.stopPropagation(); // Предотвращаем всплытие события
+            // Не вызываем vibrate() для этой кнопки
         });
         
         async function loadChibiLists() {
