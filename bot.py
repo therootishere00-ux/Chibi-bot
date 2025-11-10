@@ -11,6 +11,7 @@ from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 from bson import ObjectId
+from flask_cors import CORS
 
 from config import BOT_CONFIG, BOT_TEXTS
 
@@ -20,6 +21,11 @@ logger = logging.getLogger(__name__)
 class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
+        
+        # Инициализация Flask для мини-приложения
+        if "RENDER" in os.environ:
+            self.app = Flask(__name__)
+            CORS(self.app)
         
         # Подключение к MongoDB
         self.mongo_uri = os.getenv('MONGODB_URI')
@@ -36,8 +42,13 @@ class ChibiBot:
             logger.error(f"❌ Ошибка подключения к MongoDB: {e}")
             raise
         
+        # Загружаем списки чибиков при старте
+        self.all_common_chibis = self._scan_chibis_folder("chibis/common")
+        self.all_secret_chibis = self._scan_chibis_folder("chibis/secret")
+        
         # Инициализация коллекций
         self._init_collections()
+        self._init_admin_users()
         
         # In-memory кэш для быстрого доступа
         self.used_ids = set()
@@ -47,46 +58,45 @@ class ChibiBot:
         # Тестовые аккаунты (админы)
         self.test_users = ['tmkazavr', 'ya_admin7']
         
-        # Инициализация данных админов
-        self._init_admin_data()
+    def _scan_chibis_folder(self, folder_path):
+        """Сканирует папку с чибиками и возвращает список имен"""
+        if not os.path.exists(folder_path):
+            logger.error(f"Папка {folder_path} не найдена!")
+            return []
         
-    def _init_collections(self):
-        """Инициализация коллекций и индексов"""
-        self.users_collection.create_index("telegram_id", unique=True)
-        self.users_collection.create_index("user_id", unique=True)
-            
-    def _init_admin_data(self):
-        """Инициализация данных для админов"""
-        for admin_username in self.test_users:
-            admin_user = self.users_collection.find_one({"username": admin_username})
+        chibi_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.png')]
+        chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
+        return sorted(chibi_names)
+    
+    def _init_admin_users(self):
+        """Инициализация админских аккаунтов"""
+        for username in self.test_users:
+            # Находим админа по username
+            admin_user = self.users_collection.find_one({"username": username})
             if admin_user:
-                # Обновляем данные админа
-                self.users_collection.update_one(
-                    {"username": admin_username},
-                    {"$set": {
-                        "coins": 999999,
-                        "level": 50,
-                        "items": {"🧧 Чиби-пак": 99}
-                    }}
-                )
-                
-                # Добавляем всех чибиков админу
-                all_common_chibis = self.get_all_common_chibis()
-                all_secret_chibis = self.get_all_secret_chibis()
-                all_prize_chibis = self.get_all_prize_chibis()
-                
-                all_chibis = all_common_chibis + all_secret_chibis + all_prize_chibis
+                # Обновляем до 99 всех чибиков и 999999 коинов
+                all_chibis = self.all_common_chibis + self.all_secret_chibis
                 chibi_timestamps = {chibi: datetime.now() for chibi in all_chibis}
                 
                 self.users_collection.update_one(
-                    {"username": admin_username},
+                    {"username": username},
                     {"$set": {
-                        "chibis": all_chibis,
-                        "chibi_timestamps": chibi_timestamps
+                        "chibis": all_chibis * 99,  # 99 копий каждого чибика
+                        "chibi_timestamps": chibi_timestamps,
+                        "coins": 999999,
+                        "level": 50,
+                        "exp": 0,
+                        "items": {"🧧 Чиби-пак": 99}
                     }}
                 )
-                logger.info(f"✅ Данные админа {admin_username} обновлены")
-        
+                logger.info(f"✅ Админ {username} инициализирован с полной коллекцией")
+            
+    def _init_collections(self):
+        """Инициализация коллекций и индексов"""
+        # Создаем индексы для пользователей
+        self.users_collection.create_index("telegram_id", unique=True)
+        self.users_collection.create_index("user_id", unique=True)
+            
     def is_test_user(self, username):
         return username in self.test_users if username else False
         
@@ -96,6 +106,7 @@ class ChibiBot:
             if datetime.now() < user_data['banned_until']:
                 return True
             else:
+                # Бан истек, очищаем
                 self.users_collection.update_one(
                     {"telegram_id": str(user_id)},
                     {"$unset": {"banned_until": ""}}
@@ -160,7 +171,7 @@ class ChibiBot:
         if user_data.get('last_chibi_time'):
             last_time = user_data['last_chibi_time']
             time_passed = (datetime.now() - last_time).total_seconds()
-            if time_passed < 3 * 3600:
+            if time_passed < 3 * 3600:  # 3 часа
                 return 3 * 3600 - time_passed
         return None
         
@@ -179,9 +190,9 @@ class ChibiBot:
             time_passed = (datetime.now() - last_time).total_seconds()
             
             if task_type == 'completed':
-                cooldown = 4 * 3600
-            else:
-                cooldown = 5.5 * 3600
+                cooldown = 4 * 3600  # 4 часа
+            else:  # skipped
+                cooldown = 5.5 * 3600  # 5.5 часов
                 
             if time_passed < cooldown:
                 return cooldown - time_passed
@@ -199,10 +210,13 @@ class ChibiBot:
             now = datetime.now()
             last_bonus = user_data['last_bonus_time']
             
-            moscow_time = now + timedelta(hours=3)
+            # Проверяем, наступила ли полночь по Москве
+            moscow_time = now + timedelta(hours=3)  # UTC+3
             last_bonus_moscow = last_bonus + timedelta(hours=3)
             
+            # Если сегодня уже брали бонус
             if last_bonus_moscow.date() == moscow_time.date():
+                # Считаем время до следующей полночи
                 next_midnight = datetime(moscow_time.year, moscow_time.month, moscow_time.day) + timedelta(days=1)
                 time_left = next_midnight - moscow_time
                 return time_left.total_seconds()
@@ -216,6 +230,7 @@ class ChibiBot:
             position = random.randint(0, 1)
             user_id = letter + numbers if position == 0 else numbers + letter
             
+            # Проверяем в базе данных
             existing = self.users_collection.find_one({"user_id": user_id})
             if not existing and user_id not in self.used_ids:
                 self.used_ids.add(user_id)
@@ -232,6 +247,7 @@ class ChibiBot:
         user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
         
         if user_data:
+            # Обновляем последнюю активность
             self.users_collection.update_one(
                 {"telegram_id": telegram_id_str},
                 {"$set": {"last_active": datetime.now()}}
@@ -259,6 +275,7 @@ class ChibiBot:
                 "current_task": None
             }
             
+            # Для тестовых пользователей даем особые условия
             if self.is_test_user(username):
                 user_data["coins"] = 1000
                 user_data["level"] = 10
@@ -448,6 +465,7 @@ class ChibiBot:
         return file_path, formatted_name, rarity
 
     def get_prize_chibi(self, chibi_name):
+        """Получить призового чибика"""
         chibi_folder = "chibis/prize"
         
         if not os.path.exists(chibi_folder):
@@ -462,40 +480,7 @@ class ChibiBot:
         return file_path, chibi_name, "Prize"
 
     def get_all_common_chibis(self):
-        chibi_folder = "chibis/common"
-        
-        if not os.path.exists(chibi_folder):
-            logger.error(f"Папка {chibi_folder} не найдена!")
-            return []
-        
-        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
-        chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
-        
-        return sorted(chibi_names)
-
-    def get_all_secret_chibis(self):
-        chibi_folder = "chibis/secret"
-        
-        if not os.path.exists(chibi_folder):
-            logger.error(f"Папка {chibi_folder} не найдена!")
-            return []
-        
-        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
-        chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
-        
-        return sorted(chibi_names)
-
-    def get_all_prize_chibis(self):
-        chibi_folder = "chibis/prize"
-        
-        if not os.path.exists(chibi_folder):
-            logger.error(f"Папка {chibi_folder} не найдена!")
-            return []
-        
-        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
-        chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
-        
-        return sorted(chibi_names)
+        return self.all_common_chibis
 
     def get_chibi_count(self, telegram_id, chibi_name):
         telegram_id_str = str(telegram_id)
@@ -621,47 +606,64 @@ class ChibiBot:
         return True
 
     def get_user_collection_data(self, telegram_id):
-        """Получить данные коллекции пользователя для мини-приложения"""
+        """Получает данные коллекции пользователя для мини-приложения"""
         telegram_id_str = str(telegram_id)
         user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
         
         if not user_data:
-            return None
-            
-        all_common_chibis = self.get_all_common_chibis()
-        all_secret_chibis = self.get_all_secret_chibis()
+            return {"common": [], "secret": []}
         
         user_chibis = user_data.get('chibis', [])
         
-        # Получаем уникальные чибики пользователя
-        collected_common = []
-        collected_secret = []
+        # Определяем какие чибики есть у пользователя
+        common_collected = []
+        secret_collected = []
         
-        for chibi in set(user_chibis):
-            if chibi in all_common_chibis:
-                collected_common.append(chibi)
-            elif chibi in all_secret_chibis:
-                collected_secret.append(chibi)
-        
-        # Выбираем случайного обычного чибика для показа
-        random_common_chibi = None
-        if collected_common:
-            random_common_chibi = random.choice(collected_common)
-        
-        # Выбираем первого секретного чибика для показа
-        first_secret_chibi = collected_secret[0] if collected_secret else None
+        for chibi in set(user_chibis):  # Уникальные чибики
+            if chibi in self.all_common_chibis:
+                common_collected.append(chibi)
+            elif chibi in self.all_secret_chibis:
+                secret_collected.append(chibi)
         
         return {
-            'user_id': user_data.get('user_id'),
-            'first_name': user_data.get('first_name'),
-            'collected_common': collected_common,
-            'collected_secret': collected_secret,
-            'all_common_chibis': all_common_chibis,
-            'all_secret_chibis': all_secret_chibis,
-            'random_common_chibi': random_common_chibi,
-            'first_secret_chibi': first_secret_chibi,
-            'has_secret': len(collected_secret) > 0
+            "common": common_collected,
+            "secret": secret_collected,
+            "all_common": self.all_common_chibis,
+            "all_secret": self.all_secret_chibis
         }
+
+    def setup_flask_routes(self):
+        """Настройка маршрутов Flask для мини-приложения"""
+        @self.app.route('/')
+        def home():
+            return "🤖 Чиби-бот работает с MongoDB и мини-приложением!"
+        
+        @self.app.route('/get_user_collection', methods=['POST'])
+        def get_user_collection():
+            try:
+                data = request.get_json()
+                telegram_id = data.get('telegram_id')
+                
+                if not telegram_id:
+                    return jsonify({"error": "Telegram ID required"}), 400
+                
+                collection_data = self.get_user_collection_data(telegram_id)
+                return jsonify(collection_data)
+                
+            except Exception as e:
+                logger.error(f"Ошибка получения коллекции: {e}")
+                return jsonify({"error": "Internal server error"}), 500
+        
+        @self.app.route('/get_all_chibis', methods=['GET'])
+        def get_all_chibis():
+            try:
+                return jsonify({
+                    "common": self.all_common_chibis,
+                    "secret": self.all_secret_chibis
+                })
+            except Exception as e:
+                logger.error(f"Ошибка получения списка чибиков: {e}")
+                return jsonify({"error": "Internal server error"}), 500
 
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
@@ -742,6 +744,7 @@ class ChibiBot:
                     self.send_start_suggestion(message.chat.id)
                     return
 
+                # Парсим ставку из команды
                 parts = message.text.split()
                 if len(parts) < 2:
                     error_text = """🎲 *Неправильный формат!*
@@ -763,6 +766,7 @@ _Попробуй: /dice 100_"""
                     self.bot.reply_to(message, "❌ *Ставка должна быть больше 0!*", parse_mode='Markdown')
                     return
 
+                # Проверяем баланс
                 telegram_id_str = str(message.from_user.id)
                 user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
                 if not user_data:
@@ -774,17 +778,20 @@ _Попробуй: /dice 100_"""
                     self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {coins}💰", parse_mode='Markdown')
                     return
 
+                # Списываем ставку
                 new_coins = coins - bet
                 self.users_collection.update_one(
                     {"telegram_id": telegram_id_str},
                     {"$set": {"coins": new_coins}}
                 )
 
+                # Бросаем кость
                 dice_message = self.bot.send_dice(message.chat.id, emoji='🎲')
                 dice_value = dice_message.dice.value
 
-                time.sleep(2)
+                time.sleep(2)  # Ждем анимацию кости
 
+                # Проверяем результат (2,4,6 - выигрыш)
                 if dice_value in [2, 4, 6]:
                     win_amount = math.ceil(bet * 1.7)
                     total_coins = new_coins + win_amount
@@ -1572,11 +1579,9 @@ _Ты проиграл, все честно. Ставку уже не верну
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     btn_chibis = types.InlineKeyboardButton("Чибики", callback_data="warehouse_chibis_1")
                     btn_items = types.InlineKeyboardButton("Предметы", callback_data="warehouse_items_1")
-                    btn_view = types.InlineKeyboardButton("👀 Просмотр", web_app=types.WebAppInfo(url="https://therootishere00-ux.github.io/Chibi-bot/"))
                     btn_back = types.InlineKeyboardButton("Назад", callback_data="menu_back")
                     
                     markup.add(btn_chibis, btn_items)
-                    markup.add(btn_view)
                     markup.add(btn_back)
                     
                     self.bot.edit_message_text(
@@ -1596,6 +1601,10 @@ _Ты проиграл, все честно. Ставку уже не верну
 Страница {current_page}/{total_pages}"""
                     
                     markup = types.InlineKeyboardMarkup()
+                    
+                    # Добавляем кнопку просмотра
+                    btn_view = types.InlineKeyboardButton("👀 Просмотр", callback_data="view_collection")
+                    markup.add(btn_view)
                     
                     if chibis:
                         for chibi_name, count in chibis:
@@ -2024,12 +2033,14 @@ _Ты проиграл, все честно. Ставку уже не верну
                         self.bot.answer_callback_query(call.id, "🎒 *У тебя больше нет этого чибика!*")
                         return
                     
+                    # Удаляем чибика у отправителя
                     new_chibis = [chibi for chibi in user_data.get('chibis', []) if chibi != chibi_name]
                     self.users_collection.update_one(
                         {"telegram_id": telegram_id_str},
                         {"$set": {"chibis": new_chibis}}
                     )
                     
+                    # Добавляем чибика получателю
                     target_user = self.users_collection.find_one({"telegram_id": target_telegram_id})
                     if target_user:
                         target_chibis = target_user.get('chibis', [])
@@ -2047,9 +2058,11 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
+                    # Проверяем, является ли даритель админом и существует ли призовой чибик
                     prize_file_path, _, prize_rarity = self.get_prize_chibi(chibi_name)
                     
                     if is_admin and prize_file_path is not None:
+                        # Отправляем специальный стикер для призового чибика
                         sticker_id = "CAACAgIAAxkBAAE9l5hpEIdq0Z0LEa7UxgJtrNNZtwABDzQAAttHAALpzBBK7BbFlNYkVyw2BA"
                         self.bot.send_sticker(call.message.chat.id, sticker_id)
                         
@@ -2071,6 +2084,7 @@ _•••••••••••••••_
                         )
                         self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                         
+                        # Отправляем получателю
                         sent_message = self.bot.send_message(
                             target_telegram_id,
                             sender_text,
@@ -2080,6 +2094,7 @@ _•••••••••••••••_
                         self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
                         
                     else:
+                        # Обычный подарок
                         sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
                         self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
                         
@@ -2122,6 +2137,27 @@ _•••••••••••••••_
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
+                elif call.data == "view_collection":
+                    web_app_url = "https://therootishere00-ux.github.io/Chibi-bot/"
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    btn_open = types.InlineKeyboardButton("📱 Открыть коллекцию", web_app=web_app_url)
+                    btn_back = types.InlineKeyboardButton("Назад", callback_data="warehouse_chibis_1")
+                    markup.add(btn_open)
+                    markup.add(btn_back)
+                    
+                    collection_text = """✨ *Просмотр коллекции*
+                    
+Открой мини-приложение чтобы посмотреть свою коллекцию в красивом интерфейсе!"""
+                    
+                    self.bot.edit_message_text(
+                        collection_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
                 elif call.data == "chibi_click":
                     self.bot.answer_callback_query(call.id)
                     
@@ -2141,29 +2177,29 @@ _•••••••••••••••_
     def run(self):
         logger.info("🤖 Чиби-бот запущен с MongoDB!")
         self.setup_handlers()
+        
+        if "RENDER" in os.environ:
+            self.setup_flask_routes()
+            PORT = int(os.environ.get('PORT', 5000))
+            
+            def run_flask():
+                self.app.run(host='0.0.0.0', port=PORT)
+            
+            flask_thread = threading.Thread(target=run_flask)
+            flask_thread.daemon = True
+            flask_thread.start()
+            logger.info(f"🚀 Flask сервер запущен на порту {PORT}")
+        
         self.bot.infinity_polling()
 
 def get_token():
     return os.getenv('BOT_TOKEN')
-
-PORT = int(os.environ.get('PORT', 5000))
 
 if __name__ == "__main__":
     token = get_token()
     if not token:
         print("❌ Токен не найден!")
         exit(1)
-    
-    if "RENDER" in os.environ:
-        app = Flask(__name__)
-        @app.route('/')
-        def home():
-            return "🤖 Чиби-бот работает с MongoDB!"
-        def run_flask():
-            app.run(host='0.0.0.0', port=PORT)
-        flask_thread = threading.Thread(target=run_flask)
-        flask_thread.daemon = True
-        flask_thread.start()
     
     bot = ChibiBot(token)
     bot.run()
