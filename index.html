@@ -98,7 +98,7 @@
             transition: opacity 0.8s ease;
             z-index: 5;
             padding: 20px;
-            padding-top: 105px; /* 85px + 20px стандартного паддинга */
+            padding-top: 105px;
             box-sizing: border-box;
             overflow-y: auto;
         }
@@ -156,6 +156,7 @@
 
         .item-card:active {
             background-color: #2a2a2a;
+            transform: scale(0.98);
         }
 
         .item-image {
@@ -225,6 +226,12 @@
             padding: 6px 12px;
             border: 1px solid #FFD951;
             border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+
+        .article-link:active {
+            background-color: #FFD951;
+            color: #000;
         }
 
         .collection-screen {
@@ -240,7 +247,7 @@
             transition: opacity 0.3s ease;
             z-index: 8;
             padding: 20px;
-            padding-top: 105px; /* 85px + 20px стандартного паддинга */
+            padding-top: 105px;
             box-sizing: border-box;
             overflow-y: auto;
         }
@@ -275,6 +282,11 @@
             align-items: center;
             aspect-ratio: 1;
             position: relative;
+            transition: transform 0.2s ease;
+        }
+
+        .chibi-card:active {
+            transform: scale(0.95);
         }
 
         .chibi-image {
@@ -413,6 +425,7 @@
         const commonChibiImage = document.getElementById('commonChibiImage');
         const secretChibiImage = document.getElementById('secretChibiImage');
         const secretTitle = document.getElementById('secretTitle');
+        const articleLink = document.querySelector('.article-link');
         
         let userData = {
             collectedChibis: [],
@@ -421,6 +434,28 @@
         
         let allCommonChibis = [];
         let allSecretChibis = [];
+        
+        // Функция для легкой вибрации
+        function vibrate() {
+            if (navigator.vibrate) {
+                navigator.vibrate(10); // 10ms вибрация
+            }
+        }
+        
+        // Функция для проверки времени последнего запуска
+        function shouldShowLoading() {
+            const lastLaunch = localStorage.getItem('lastLaunchTime');
+            if (!lastLaunch) return true;
+            
+            const currentTime = Date.now();
+            const timeDiff = currentTime - parseInt(lastLaunch);
+            return timeDiff > 20000; // 20 секунд
+        }
+        
+        // Функция для сохранения времени запуска
+        function saveLaunchTime() {
+            localStorage.setItem('lastLaunchTime', Date.now().toString());
+        }
         
         function initTelegramWebApp() {
             if (window.Telegram && window.Telegram.WebApp) {
@@ -443,6 +478,7 @@
         }
         
         function handleBackButton() {
+            vibrate(); // Вибрация при нажатии назад
             if (!commonCollectionScreen.classList.contains('hidden')) {
                 showMainScreen();
             } else if (!secretCollectionScreen.classList.contains('hidden')) {
@@ -462,6 +498,7 @@
         }
         
         function showCollectionScreen(screen) {
+            vibrate(); // Вибрация при переходе в коллекцию
             mainScreen.classList.add('hidden');
             screen.classList.remove('hidden');
             screen.style.opacity = '1';
@@ -557,14 +594,22 @@
             });
         }
         
+        // Добавляем вибрацию при нажатии на кнопки
         commonChibisBtn.addEventListener('click', function() {
+            vibrate();
             showCollectionScreen(commonCollectionScreen);
             loadCommonCollection();
         });
         
         secretChibisBtn.addEventListener('click', function() {
+            vibrate();
             showCollectionScreen(secretCollectionScreen);
             loadSecretCollection();
+        });
+        
+        // Убираем вибрацию для кнопки "Читать"
+        articleLink.addEventListener('click', function(e) {
+            e.stopPropagation(); // Предотвращаем всплытие события
         });
         
         async function loadChibiLists() {
@@ -607,6 +652,7 @@
         }
         
         function finishLoading() {
+            saveLaunchTime(); // Сохраняем время запуска
             loadingScreen.style.opacity = '0';
             
             setTimeout(() => {
@@ -618,12 +664,27 @@
             }, 500);
         }
         
+        function skipLoading() {
+            // Пропускаем загрузку, если прошло меньше 20 секунд
+            loadingScreen.style.display = 'none';
+            mainScreen.style.opacity = '1';
+            saveLaunchTime(); // Все равно сохраняем время запуска
+        }
+        
         let progress = 0;
         window.onload = async function() {
             initTelegramWebApp();
-            await loadChibiLists();
-            await loadUserCollection();
-            setTimeout(simulateRealisticLoading, 500);
+            
+            // Проверяем, нужно ли показывать экран загрузки
+            if (shouldShowLoading()) {
+                await loadChibiLists();
+                await loadUserCollection();
+                setTimeout(simulateRealisticLoading, 500);
+            } else {
+                await loadChibiLists();
+                await loadUserCollection();
+                skipLoading();
+            }
         };
     </script>
 </body>
