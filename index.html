@@ -6,6 +6,7 @@
     <title>Chibeki Bot</title>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         * {
             -webkit-touch-callout: none;
@@ -73,6 +74,7 @@
             width: 0%;
             background-color: white;
             border-radius: 2px;
+            transition: width 0.3s ease;
         }
 
         .footer-text {
@@ -139,10 +141,8 @@
             margin-bottom: 12px;
             display: flex;
             align-items: center;
-            width: calc(100% - 20px);
+            width: 100%;
             box-sizing: border-box;
-            margin-left: 10px;
-            margin-right: 10px;
             cursor: pointer;
             transition: background-color 0.2s ease;
         }
@@ -168,19 +168,6 @@
             object-fit: cover;
         }
 
-        .icon-image {
-            width: 50px;
-            height: 50px;
-            border-radius: 12px;
-            background-color: rgba(255, 255, 255, 0.1);
-            margin-right: 15px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 20px;
-        }
-
         .item-content {
             flex: 1;
         }
@@ -191,11 +178,6 @@
             color: #fff;
         }
 
-        .item-chevron {
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 16px;
-        }
-
         .article-card {
             background-color: #1a1a1a;
             border-radius: 18px;
@@ -203,11 +185,8 @@
             margin-bottom: 12px;
             display: flex;
             align-items: center;
-            width: calc(100% - 20px);
+            width: 100%;
             box-sizing: border-box;
-            margin-left: 10px;
-            margin-right: 10px;
-            position: relative;
         }
 
         .article-image {
@@ -239,12 +218,6 @@
             padding: 6px 12px;
             border: 1px solid #FFD951;
             border-radius: 8px;
-            transition: all 0.2s ease;
-        }
-
-        .article-link:hover {
-            background-color: #FFD951;
-            color: #000;
         }
 
         .collection-screen {
@@ -271,20 +244,6 @@
             position: relative;
         }
 
-        .back-button {
-            color: white;
-            font-size: 20px;
-            margin-right: 15px;
-            cursor: pointer;
-            padding: 8px;
-            border-radius: 10px;
-            transition: background-color 0.2s ease;
-        }
-
-        .back-button:active {
-            background-color: #2a2a2a;
-        }
-
         .header-title {
             color: white;
             font-size: 18px;
@@ -295,7 +254,6 @@
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 12px;
-            padding: 0 5px;
             max-height: calc(100vh - 120px);
             overflow-y: auto;
         }
@@ -309,11 +267,6 @@
             align-items: center;
             aspect-ratio: 1;
             position: relative;
-            transition: transform 0.2s ease;
-        }
-
-        .chibi-card:active {
-            transform: scale(0.95);
         }
 
         .chibi-image {
@@ -374,13 +327,10 @@
 <body>
     <div class="loading-screen" id="loadingScreen">
         <div class="bot-name">@chibeki_bot</div>
-        
         <img src="https://i.ibb.co/zTB331HR/image.png" alt="Логотип" class="logo">
-        
         <div class="loading-bar">
             <div class="loading-progress" id="progress"></div>
         </div>
-
         <div class="footer-text">Загрузка коллекции...</div>
     </div>
 
@@ -400,9 +350,6 @@
             <div class="item-content">
                 <div class="item-title">Обычные</div>
             </div>
-            <div class="item-chevron">
-                <i class="fas fa-chevron-right"></i>
-            </div>
         </div>
         
         <div class="item-card" id="secretChibisBtn">
@@ -411,9 +358,6 @@
             </div>
             <div class="item-content">
                 <div class="item-title" id="secretTitle">???</div>
-            </div>
-            <div class="item-chevron">
-                <i class="fas fa-chevron-right"></i>
             </div>
         </div>
         
@@ -430,9 +374,6 @@
 
     <div class="collection-screen hidden" id="commonCollectionScreen">
         <div class="header">
-            <div class="back-button" id="backButtonCommon">
-                <i class="fas fa-arrow-left"></i>
-            </div>
             <div class="header-title">Обычные чибики</div>
         </div>
         
@@ -442,9 +383,6 @@
 
     <div class="collection-screen hidden" id="secretCollectionScreen">
         <div class="header">
-            <div class="back-button" id="backButtonSecret">
-                <i class="fas fa-arrow-left"></i>
-            </div>
             <div class="header-title">Секретные чибики</div>
         </div>
         
@@ -453,14 +391,6 @@
     </div>
 
     <script>
-        document.addEventListener('gesturestart', function(e) {
-            e.preventDefault();
-        });
-        
-        document.addEventListener('selectstart', function(e) {
-            e.preventDefault();
-        });
-        
         const progressBar = document.getElementById('progress');
         const loadingScreen = document.getElementById('loadingScreen');
         const mainScreen = document.getElementById('mainScreen');
@@ -469,8 +399,6 @@
         const secretChibisBtn = document.getElementById('secretChibisBtn');
         const commonCollectionScreen = document.getElementById('commonCollectionScreen');
         const secretCollectionScreen = document.getElementById('secretCollectionScreen');
-        const backButtonCommon = document.getElementById('backButtonCommon');
-        const backButtonSecret = document.getElementById('backButtonSecret');
         const commonChibiGrid = document.getElementById('commonChibiGrid');
         const secretChibiGrid = document.getElementById('secretChibiGrid');
         const commonChibiImage = document.getElementById('commonChibiImage');
@@ -484,6 +412,55 @@
         
         let allCommonChibis = [];
         let allSecretChibis = [];
+        
+        function initTelegramWebApp() {
+            if (window.Telegram && window.Telegram.WebApp) {
+                Telegram.WebApp.ready();
+                
+                const user = Telegram.WebApp.initDataUnsafe.user;
+                if (user) {
+                    if (user.photo_url) {
+                        userAvatar.innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">`;
+                    }
+                    
+                    Telegram.WebApp.setHeaderColor('#000000');
+                    Telegram.WebApp.setBackgroundColor('#000000');
+                    
+                    Telegram.WebApp.BackButton.onClick(handleBackButton);
+                }
+                
+                Telegram.WebApp.expand();
+            }
+        }
+        
+        function handleBackButton() {
+            if (!commonCollectionScreen.classList.contains('hidden')) {
+                showMainScreen();
+            } else if (!secretCollectionScreen.classList.contains('hidden')) {
+                showMainScreen();
+            }
+        }
+        
+        function showMainScreen() {
+            commonCollectionScreen.classList.add('hidden');
+            secretCollectionScreen.classList.add('hidden');
+            mainScreen.classList.remove('hidden');
+            mainScreen.style.opacity = '1';
+            
+            if (window.Telegram && window.Telegram.WebApp) {
+                Telegram.WebApp.BackButton.hide();
+            }
+        }
+        
+        function showCollectionScreen(screen) {
+            mainScreen.classList.add('hidden');
+            screen.classList.remove('hidden');
+            screen.style.opacity = '1';
+            
+            if (window.Telegram && window.Telegram.WebApp) {
+                Telegram.WebApp.BackButton.show();
+            }
+        }
         
         async function loadUserCollection() {
             try {
@@ -502,7 +479,6 @@
                             const collection = await response.json();
                             userData.collectedChibis = collection.common || [];
                             userData.secretChibis = collection.secret || [];
-                            
                             updateMainScreenImages();
                         }
                     }
@@ -573,29 +549,13 @@
         }
         
         commonChibisBtn.addEventListener('click', function() {
-            mainScreen.classList.add('hidden');
-            commonCollectionScreen.classList.remove('hidden');
-            commonCollectionScreen.style.opacity = '1';
+            showCollectionScreen(commonCollectionScreen);
             loadCommonCollection();
         });
         
         secretChibisBtn.addEventListener('click', function() {
-            mainScreen.classList.add('hidden');
-            secretCollectionScreen.classList.remove('hidden');
-            secretCollectionScreen.style.opacity = '1';
+            showCollectionScreen(secretCollectionScreen);
             loadSecretCollection();
-        });
-        
-        backButtonCommon.addEventListener('click', function() {
-            commonCollectionScreen.classList.add('hidden');
-            mainScreen.classList.remove('hidden');
-            mainScreen.style.opacity = '1';
-        });
-        
-        backButtonSecret.addEventListener('click', function() {
-            secretCollectionScreen.classList.add('hidden');
-            mainScreen.classList.remove('hidden');
-            mainScreen.style.opacity = '1';
         });
         
         async function loadChibiLists() {
@@ -606,21 +566,6 @@
                 allSecretChibis = data.secret || [];
             } catch (error) {
                 console.error('Ошибка загрузки списка чибиков:', error);
-            }
-        }
-        
-        function initTelegramUser() {
-            if (window.Telegram && window.Telegram.WebApp) {
-                const user = Telegram.WebApp.initDataUnsafe.user;
-                if (user && user.photo_url) {
-                    userAvatar.innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">`;
-                } else {
-                    userAvatar.innerHTML = 'TG';
-                }
-                
-                Telegram.WebApp.expand();
-            } else {
-                userAvatar.innerHTML = '<img src="https://via.placeholder.com/50/333/fff?text=TG" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">';
             }
         }
         
@@ -666,7 +611,7 @@
         
         let progress = 0;
         window.onload = async function() {
-            initTelegramUser();
+            initTelegramWebApp();
             await loadChibiLists();
             await loadUserCollection();
             setTimeout(simulateRealisticLoading, 500);
