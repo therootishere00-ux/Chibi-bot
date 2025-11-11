@@ -103,7 +103,6 @@
             overflow-y: auto;
         }
 
-        /* Скрываем скроллбары во всем приложении */
         .main-screen::-webkit-scrollbar,
         .chibi-grid::-webkit-scrollbar {
             display: none;
@@ -545,7 +544,6 @@
         let allSecretChibis = [];
         let allPrizeChibis = [];
         
-        // ВСТРОЕННЫЙ URL БОТА
         const BOT_API_URL = 'https://chibi-bot-3d4x.onrender.com';
         
         function vibrate() {
@@ -571,7 +569,6 @@
             if (window.Telegram && window.Telegram.WebApp) {
                 Telegram.WebApp.ready();
                 
-                // Устанавливаем полноэкранный режим
                 Telegram.WebApp.expand();
                 
                 const user = Telegram.WebApp.initDataUnsafe.user;
@@ -583,7 +580,6 @@
                     Telegram.WebApp.setHeaderColor('#000000');
                     Telegram.WebApp.setBackgroundColor('#000000');
                     
-                    // ОБРАБОТКА КНОПКИ BACK В ТЕЛЕГРАМ
                     Telegram.WebApp.BackButton.onClick(handleBackButton);
                 }
             }
@@ -608,7 +604,6 @@
             mainScreen.classList.remove('hidden');
             mainScreen.style.opacity = '1';
             
-            // Скрываем кнопку BACK когда на главном экране
             if (window.Telegram && window.Telegram.WebApp) {
                 Telegram.WebApp.BackButton.hide();
             }
@@ -620,7 +615,6 @@
             screen.classList.remove('hidden');
             screen.style.opacity = '1';
             
-            // Показываем кнопку BACK когда в коллекции
             if (window.Telegram && window.Telegram.WebApp) {
                 Telegram.WebApp.BackButton.show();
             }
@@ -638,7 +632,6 @@
             commonPercentage.textContent = `${percentage}%`;
             commonProgressText.textContent = `${percentage}%`;
             
-            // Обновляем счетчик призовых
             if (userData.prizeChibis && userData.prizeChibis.length > 0) {
                 prizeCount.textContent = `x${userData.prizeChibis.length}`;
                 prizeProgressText.textContent = `x${userData.prizeChibis.length}`;
@@ -686,35 +679,28 @@
         }
         
         function updateMainScreenImages() {
-            // Обновляем изображение обычных чибиков
             if (userData.collectedChibis.length > 0) {
                 const randomCommon = userData.collectedChibis[Math.floor(Math.random() * userData.collectedChibis.length)];
                 const commonImageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/common/${randomCommon.replace(/ /g, '_')}.png`;
                 commonChibiImage.src = commonImageUrl;
-                console.log('Установлено изображение обычного чибика:', commonImageUrl);
             } else {
-                // Заглушка если нет обычных чибиков
                 commonChibiImage.src = 'https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/common/placeholder.png';
             }
             
-            // Обновляем изображение секретных чибиков
             if (userData.secretChibis.length > 0) {
                 const randomSecret = userData.secretChibis[Math.floor(Math.random() * userData.secretChibis.length)];
                 const secretImageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/secret/${randomSecret.replace(/ /g, '_')}.png`;
                 secretChibiImage.src = secretImageUrl;
                 secretTitle.textContent = 'Секретные';
                 secretChibisBtn.style.display = 'flex';
-                console.log('Установлено изображение секретного чибика:', secretImageUrl);
             } else {
                 secretChibisBtn.style.display = 'none';
             }
             
-            // Обновляем изображение призовых чибиков
             if (userData.prizeChibis.length > 0) {
                 const randomPrize = userData.prizeChibis[Math.floor(Math.random() * userData.prizeChibis.length)];
                 const prizeImageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/prize/${randomPrize.replace(/ /g, '_')}.png`;
                 prizeChibiImage.src = prizeImageUrl;
-                console.log('Установлено изображение призового чибика:', prizeImageUrl);
             }
         }
         
@@ -723,7 +709,6 @@
             card.className = 'chibi-card';
             
             if (rarity === 'secret' && !isCollected) {
-                // Для неполученных секретных чибиков показываем "???"
                 card.innerHTML = `
                     <div class="unknown-chibi">
                         <div class="unknown-icon">
@@ -733,7 +718,6 @@
                     </div>
                 `;
             } else {
-                // Для обычных чибиков и полученных секретных
                 const imageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/${rarity}/${chibiName.replace(/ /g, '_')}.png`;
                 
                 card.innerHTML = `
@@ -761,7 +745,6 @@
         
         function loadCommonCollection() {
             commonChibiGrid.innerHTML = '';
-            console.log('Загрузка обычных чибиков. Всего:', allCommonChibis.length);
             
             allCommonChibis.forEach(chibiName => {
                 const isCollected = userData.collectedChibis.includes(chibiName);
@@ -774,10 +757,7 @@
         
         function loadSecretCollection() {
             secretChibiGrid.innerHTML = '';
-            console.log('Загрузка секретных чибиков. Всего:', allSecretChibis.length);
             
-            // Для секретных показываем только те, которые у пользователя есть
-            // и "???" для остальных
             allSecretChibis.forEach(chibiName => {
                 const isCollected = userData.secretChibis.includes(chibiName);
                 const chibiCard = createChibiCard(chibiName, isCollected, 'secret');
@@ -787,7 +767,6 @@
         
         function loadPrizeCollection() {
             prizeChibiGrid.innerHTML = '';
-            console.log('Загрузка призовых чибиков. Всего:', allPrizeChibis.length);
             
             allPrizeChibis.forEach(chibiName => {
                 const isCollected = userData.prizeChibis.includes(chibiName);
@@ -798,7 +777,6 @@
             updateCollectionProgress();
         }
         
-        // Обработчики событий
         commonChibisBtn.addEventListener('click', function() {
             vibrate();
             showCollectionScreen(commonCollectionScreen);
