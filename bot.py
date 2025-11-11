@@ -22,18 +22,15 @@ class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
         
-        # Тестовые аккаунты (админы) - ДОЛЖНЫ БЫТЬ ОБЪЯВЛЕНЫ ПЕРВЫМИ
         self.test_users = ['tmkazavr', 'ya_admin7']
         
-        # Инициализация Flask для мини-приложения
         if "RENDER" in os.environ:
             self.app = Flask(__name__)
             CORS(self.app)
         
-        # Подключение к MongoDB
         self.mongo_uri = os.getenv('MONGODB_URI')
         if not self.mongo_uri:
-            logger.error("MONGODB_URI не найден в переменных окружения!")
+            logger.error("MONGODB_URI не найден!")
             raise ValueError("MONGODB_URI не найден")
         
         try:
@@ -45,21 +42,18 @@ class ChibiBot:
             logger.error(f"❌ Ошибка подключения к MongoDB: {e}")
             raise
         
-        # Загружаем списки чибиков при старте
         self.all_common_chibis = self._scan_chibis_folder("chibis/common")
         self.all_secret_chibis = self._scan_chibis_folder("chibis/secret")
+        self.all_prize_chibis = self._scan_chibis_folder("chibis/prize")
         
-        # Инициализация коллекций
         self._init_collections()
         self._init_admin_users()
         
-        # In-memory кэш для быстрого доступа
         self.used_ids = set()
         self.gift_selections = {}
         self.message_owners = {}
         
     def _scan_chibis_folder(self, folder_path):
-        """Сканирует папку с чибиками и возвращает список имен"""
         if not os.path.exists(folder_path):
             logger.error(f"Папка {folder_path} не найдена!")
             return []
@@ -69,40 +63,29 @@ class ChibiBot:
         return sorted(chibi_names)
     
     def _init_admin_users(self):
-        """Инициализация админских аккаунтов"""
         for username in self.test_users:
-            # Находим админа по username
             admin_user = self.users_collection.find_one({"username": username})
             if admin_user:
-                # Обновляем до 99 всех чибиков и 999999 коинов
-                all_chibis = self.all_common_chibis + self.all_secret_chibis
+                all_chibis = self.all_common_chibis + self.all_secret_chibis + self.all_prize_chibis
                 chibi_timestamps = {chibi: datetime.now() for chibi in all_chibis}
                 
                 self.users_collection.update_one(
                     {"username": username},
                     {"$set": {
-                        "chibis": all_chibis * 99,  # 99 копий каждого чибика
+                        "chibis": all_chibis * 99,
                         "chibi_timestamps": chibi_timestamps,
                         "coins": 999999,
-                        "level": 50,
-                        "exp": 0,
                         "items": {"🧧 Чиби-пак": 99}
                     }}
                 )
-                logger.info(f"✅ Админ {username} инициализирован с полной коллекцией")
-            else:
-                logger.info(f"ℹ️ Админ {username} еще не зарегистрирован в боте")
+                logger.info(f"✅ Админ {username} инициализирован")
             
     def _init_collections(self):
-        """Инициализация коллекций и индексов"""
-        # Создаем индексы для пользователей
         self.users_collection.create_index("telegram_id", unique=True)
         self.users_collection.create_index("user_id", unique=True)
             
     def is_test_user(self, username):
         return username in self.test_users if username else False
-        
-    # ... остальной код без изменений ...
         
     def is_banned(self, user_id):
         user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
@@ -110,7 +93,6 @@ class ChibiBot:
             if datetime.now() < user_data['banned_until']:
                 return True
             else:
-                # Бан истек, очищаем
                 self.users_collection.update_one(
                     {"telegram_id": str(user_id)},
                     {"$unset": {"banned_until": ""}}
@@ -118,15 +100,12 @@ class ChibiBot:
         return False
         
     def clear_user_data(self, telegram_id_str):
-        """Полная очистка данных пользователя"""
         self.users_collection.update_one(
             {"telegram_id": telegram_id_str},
             {"$set": {
                 "chibis": [],
                 "items": {"🧧 Чиби-пак": 1},
                 "coins": 0,
-                "level": 1,
-                "exp": 0,
                 "chibi_timestamps": {},
                 "last_chibi_time": None,
                 "last_task_time": None,
@@ -175,7 +154,7 @@ class ChibiBot:
         if user_data.get('last_chibi_time'):
             last_time = user_data['last_chibi_time']
             time_passed = (datetime.now() - last_time).total_seconds()
-            if time_passed < 3 * 3600:  # 3 часа
+            if time_passed < 3 * 3600:
                 return 3 * 3600 - time_passed
         return None
         
@@ -194,9 +173,9 @@ class ChibiBot:
             time_passed = (datetime.now() - last_time).total_seconds()
             
             if task_type == 'completed':
-                cooldown = 4 * 3600  # 4 часа
-            else:  # skipped
-                cooldown = 5.5 * 3600  # 5.5 часов
+                cooldown = 4 * 3600
+            else:
+                cooldown = 5.5 * 3600
                 
             if time_passed < cooldown:
                 return cooldown - time_passed
@@ -214,13 +193,10 @@ class ChibiBot:
             now = datetime.now()
             last_bonus = user_data['last_bonus_time']
             
-            # Проверяем, наступила ли полночь по Москве
-            moscow_time = now + timedelta(hours=3)  # UTC+3
+            moscow_time = now + timedelta(hours=3)
             last_bonus_moscow = last_bonus + timedelta(hours=3)
             
-            # Если сегодня уже брали бонус
             if last_bonus_moscow.date() == moscow_time.date():
-                # Считаем время до следующей полночи
                 next_midnight = datetime(moscow_time.year, moscow_time.month, moscow_time.day) + timedelta(days=1)
                 time_left = next_midnight - moscow_time
                 return time_left.total_seconds()
@@ -234,7 +210,6 @@ class ChibiBot:
             position = random.randint(0, 1)
             user_id = letter + numbers if position == 0 else numbers + letter
             
-            # Проверяем в базе данных
             existing = self.users_collection.find_one({"user_id": user_id})
             if not existing and user_id not in self.used_ids:
                 self.used_ids.add(user_id)
@@ -251,7 +226,6 @@ class ChibiBot:
         user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
         
         if user_data:
-            # Обновляем последнюю активность
             self.users_collection.update_one(
                 {"telegram_id": telegram_id_str},
                 {"$set": {"last_active": datetime.now()}}
@@ -269,8 +243,6 @@ class ChibiBot:
                 "chibis": [],
                 "items": {"🧧 Чиби-пак": 1},
                 "coins": 0,
-                "level": 1,
-                "exp": 0,
                 "chibi_timestamps": {},
                 "last_chibi_time": None,
                 "last_task_time": None,
@@ -279,10 +251,8 @@ class ChibiBot:
                 "current_task": None
             }
             
-            # Для тестовых пользователей даем особые условия
             if self.is_test_user(username):
                 user_data["coins"] = 1000
-                user_data["level"] = 10
                 user_data["items"]["🧧 Чиби-пак"] = 5
             
             self.users_collection.insert_one(user_data)
@@ -306,121 +276,6 @@ class ChibiBot:
                 self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
         else:
             self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
-
-    def get_required_exp(self, level):
-        if level < 5:
-            return level * 80
-        elif level < 10:
-            return 400 + (level - 4) * 120
-        elif level < 20:
-            return 1120 + (level - 9) * 180
-        elif level < 30:
-            return 2920 + (level - 19) * 250
-        else:
-            return 5420 + (level - 29) * 350
-
-    def add_exp(self, telegram_id, exp_amount):
-        telegram_id_str = str(telegram_id)
-        
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        if not user_data:
-            return 0, 1
-            
-        current_level = user_data.get('level', 1)
-        current_exp = user_data.get('exp', 0)
-        new_exp = current_exp + exp_amount
-        
-        required_exp = self.get_required_exp(current_level)
-        level_ups = 0
-        
-        while new_exp >= required_exp:
-            new_exp -= required_exp
-            current_level += 1
-            level_ups += 1
-            required_exp = self.get_required_exp(current_level)
-        
-        self.users_collection.update_one(
-            {"telegram_id": telegram_id_str},
-            {"$set": {
-                "level": current_level,
-                "exp": new_exp
-            }}
-        )
-        
-        return level_ups, current_level
-
-    def get_level_progress(self, telegram_id):
-        telegram_id_str = str(telegram_id)
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        if not user_data:
-            return 1, 0, self.get_required_exp(1), 0
-            
-        level = user_data.get('level', 1)
-        current_exp = user_data.get('exp', 0)
-        required_exp = self.get_required_exp(level)
-        percentage = int((current_exp / required_exp) * 100) if required_exp > 0 else 0
-        return level, current_exp, required_exp, percentage
-
-    def get_unlocked_feature(self, level):
-        if level == 3:
-            return "Охота за чибиками"
-        elif level == 7:
-            return "Заказы в кантине"
-        return None
-
-    def send_level_up_message(self, telegram_id, old_level, new_level):
-        time.sleep(1)
-        
-        telegram_id_str = str(telegram_id)
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        if not user_data:
-            return
-            
-        user_name = user_data.get('first_name', 'путешественник')
-        
-        current_items = user_data.get('items', {})
-        if "🧧 Чиби-пак" not in current_items:
-            current_items["🧧 Чиби-пак"] = 0
-        current_items["🧧 Чиби-пак"] += 1
-        
-        self.users_collection.update_one(
-            {"telegram_id": telegram_id_str},
-            {"$set": {"items": current_items}}
-        )
-        
-        unlocked_feature = self.get_unlocked_feature(new_level)
-        
-        try:
-            sticker_id = "CAACAgIAAxkBAAE9VHtpCGLDUXiyHkIeGqv7M2eqFbN3eQAC1kgAAuSPEUq4MV_FOLGn0zYE"
-            self.bot.send_sticker(telegram_id, sticker_id)
-        except:
-            pass
-        
-        if unlocked_feature:
-            level_text = f"""*Эй, {user_name}!*
-Ты только что апнул новый уровень! Поздравляю!
-•••••••••••••••••••
-*Уровень {old_level} --> Уровень {new_level}*
-•••••••••••••••••••
-Теперь доступно: 
-  - *{unlocked_feature}*
-•••••••••••••••••••
-И чтобы ты не расслаблялся, держи небольшой подгон:
-+ *🧧 1* Чиби-пак"""
-        else:
-            level_text = f"""*Эй, {user_name}!*
-Ты только что апнул новый уровень! Поздравляю!
-•••••••••••••••••••
-*Уровень {old_level} --> Уровень {new_level}*
-•••••••••••••••••••
-И чтобы ты не расслаблялся, держи небольшой подгон:
-+ *🧧 1* Чиби-пак"""
-        
-        try:
-            sent_message = self.bot.send_message(telegram_id, level_text, parse_mode='Markdown')
-            self.message_owners[(telegram_id, sent_message.message_id)] = telegram_id_str
-        except:
-            pass
 
     def add_chibi_to_user(self, telegram_id, chibi_name, rarity="Common"):
         telegram_id_str = str(telegram_id)
@@ -469,7 +324,6 @@ class ChibiBot:
         return file_path, formatted_name, rarity
 
     def get_prize_chibi(self, chibi_name):
-        """Получить призового чибика"""
         chibi_folder = "chibis/prize"
         
         if not os.path.exists(chibi_folder):
@@ -610,7 +464,6 @@ class ChibiBot:
         return True
 
     def get_user_collection_data(self, telegram_id):
-        """Получает данные коллекции пользователя для мини-приложения"""
         telegram_id_str = str(telegram_id)
         user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
         
@@ -619,11 +472,10 @@ class ChibiBot:
         
         user_chibis = user_data.get('chibis', [])
         
-        # Определяем какие чибики есть у пользователя
         common_collected = []
         secret_collected = []
         
-        for chibi in set(user_chibis):  # Уникальные чибики
+        for chibi in set(user_chibis):
             if chibi in self.all_common_chibis:
                 common_collected.append(chibi)
             elif chibi in self.all_secret_chibis:
@@ -637,7 +489,6 @@ class ChibiBot:
         }
 
     def setup_flask_routes(self):
-        """Настройка маршрутов Flask для мини-приложения"""
         @self.app.route('/')
         def home():
             return "🤖 Чиби-бот работает с MongoDB и мини-приложением!"
@@ -748,7 +599,6 @@ class ChibiBot:
                     self.send_start_suggestion(message.chat.id)
                     return
 
-                # Парсим ставку из команды
                 parts = message.text.split()
                 if len(parts) < 2:
                     error_text = """🎲 *Неправильный формат!*
@@ -770,7 +620,6 @@ _Попробуй: /dice 100_"""
                     self.bot.reply_to(message, "❌ *Ставка должна быть больше 0!*", parse_mode='Markdown')
                     return
 
-                # Проверяем баланс
                 telegram_id_str = str(message.from_user.id)
                 user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
                 if not user_data:
@@ -782,20 +631,17 @@ _Попробуй: /dice 100_"""
                     self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {coins}💰", parse_mode='Markdown')
                     return
 
-                # Списываем ставку
                 new_coins = coins - bet
                 self.users_collection.update_one(
                     {"telegram_id": telegram_id_str},
                     {"$set": {"coins": new_coins}}
                 )
 
-                # Бросаем кость
                 dice_message = self.bot.send_dice(message.chat.id, emoji='🎲')
                 dice_value = dice_message.dice.value
 
-                time.sleep(2)  # Ждем анимацию кости
+                time.sleep(2)
 
-                # Проверяем результат (2,4,6 - выигрыш)
                 if dice_value in [2, 4, 6]:
                     win_amount = math.ceil(bet * 1.7)
                     total_coins = new_coins + win_amount
@@ -987,48 +833,6 @@ _Ты проиграл, все честно. Ставку уже не верну
                 else:
                     self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
 
-        @self.bot.message_handler(commands=['level'])
-        def level_handler(message):
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(
-                            message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
-                    return
-                    
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                level, current_exp, required_exp, percentage = self.get_level_progress(message.from_user.id)
-                
-                level_text = f"""💫 *Твой уровень* — *{level}* ({percentage}%)"""
-                
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, level_text, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, level_text, parse_mode='Markdown')
-                
-            except Exception as e:
-                logger.error(f"Ошибка: {e}")
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
-
         @self.bot.message_handler(commands=['mart'])
         def mart_handler(message):
             try:
@@ -1128,9 +932,6 @@ _Ты проиграл, все честно. Ставку уже не верну
                 self.add_chibi_to_user(message.from_user.id, chibi_name)
                 chibi_count = self.get_chibi_count(message.from_user.id, chibi_name)
                 
-                exp_gained = random.randint(15, 25)
-                level_ups, new_level = self.add_exp(message.from_user.id, exp_gained)
-                
                 self.users_collection.update_one(
                     {"telegram_id": telegram_id_str},
                     {"$set": {"last_chibi_time": datetime.now()}}
@@ -1145,9 +946,7 @@ _Ты проиграл, все честно. Ставку уже не верну
 Приходи еще через *2ч 59м*
 •••••••••••••••••••
 Редкость: {rarity_emoji} {rarity}
-У тебя: {chibi_count}
-•••••••••••••••••••
-+ ⭐️ *{exp_gained}* опыта"""
+У тебя: {chibi_count}"""
                 
                 with open(file_path, 'rb') as photo:
                     if message.chat.type == 'private':
@@ -1168,10 +967,6 @@ _Ты проиграл, все честно. Ставку уже не верну
                         self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     
                 logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
-                
-                if level_ups > 0:
-                    threading.Thread(target=self.send_level_up_message, 
-                                   args=(message.from_user.id, new_level - level_ups, new_level)).start()
                     
             except Exception as e:
                 logger.error(f"Ошибка при отправке чиби: {e}")
@@ -1475,15 +1270,11 @@ _Ты проиграл, все честно. Ставку уже не верну
                         }}
                     )
                     
-                    exp_gained = random.randint(20, 30)
-                    level_ups, new_level = self.add_exp(call.from_user.id, exp_gained)
-                    
                     user_nick = call.from_user.first_name or "путешественник"
                     complete_text = f"""*Ес! {user_nick}, ты выполнил таск!*
 За это ты получаешь обещанную награду. Даже не буду гадать, сколько ты выбивал нужного чибика
 •••••••••••••••••••
-+ 💰*{reward}* коинов
-+ ⭐️ *{exp_gained}* опыта"""
++ 💰*{reward}* коинов"""
                     
                     sent_message = self.bot.send_message(
                         call.message.chat.id,
@@ -1491,10 +1282,6 @@ _Ты проиграл, все честно. Ставку уже не верну
                         parse_mode='Markdown'
                     )
                     self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-                    
-                    if level_ups > 0:
-                        threading.Thread(target=self.send_level_up_message, 
-                                       args=(call.from_user.id, new_level - level_ups, new_level)).start()
                     
                 elif call.data == "task_cannot_complete":
                     self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
@@ -1606,7 +1393,6 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Добавляем кнопку просмотра
                     btn_view = types.InlineKeyboardButton("👀 Просмотр", callback_data="view_collection")
                     markup.add(btn_view)
                     
@@ -2037,14 +1823,12 @@ _Ты проиграл, все честно. Ставку уже не верну
                         self.bot.answer_callback_query(call.id, "🎒 *У тебя больше нет этого чибика!*")
                         return
                     
-                    # Удаляем чибика у отправителя
                     new_chibis = [chibi for chibi in user_data.get('chibis', []) if chibi != chibi_name]
                     self.users_collection.update_one(
                         {"telegram_id": telegram_id_str},
                         {"$set": {"chibis": new_chibis}}
                     )
                     
-                    # Добавляем чибика получателю
                     target_user = self.users_collection.find_one({"telegram_id": target_telegram_id})
                     if target_user:
                         target_chibis = target_user.get('chibis', [])
@@ -2062,11 +1846,9 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    # Проверяем, является ли даритель админом и существует ли призовой чибик
                     prize_file_path, _, prize_rarity = self.get_prize_chibi(chibi_name)
                     
                     if is_admin and prize_file_path is not None:
-                        # Отправляем специальный стикер для призового чибика
                         sticker_id = "CAACAgIAAxkBAAE9l5hpEIdq0Z0LEa7UxgJtrNNZtwABDzQAAttHAALpzBBK7BbFlNYkVyw2BA"
                         self.bot.send_sticker(call.message.chat.id, sticker_id)
                         
@@ -2088,7 +1870,6 @@ _•••••••••••••••_
                         )
                         self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
                         
-                        # Отправляем получателю
                         sent_message = self.bot.send_message(
                             target_telegram_id,
                             sender_text,
@@ -2098,7 +1879,6 @@ _•••••••••••••••_
                         self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
                         
                     else:
-                        # Обычный подарок
                         sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
                         self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
                         
