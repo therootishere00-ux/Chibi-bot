@@ -209,6 +209,16 @@
             font-weight: 500;
         }
 
+        .collection-count {
+            position: absolute;
+            right: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+            font-weight: 500;
+        }
+
         .article-card {
             background-color: #1a1a1a;
             border-radius: 18px;
@@ -291,6 +301,13 @@
         }
 
         .collection-progress {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+            font-weight: 500;
+            margin-left: 10px;
+        }
+
+        .collection-count-header {
             color: rgba(255, 255, 255, 0.7);
             font-size: 14px;
             font-weight: 500;
@@ -441,6 +458,16 @@
             </div>
         </div>
         
+        <div class="item-card" id="prizeChibisBtn" style="display: none;">
+            <div class="item-image">
+                <img src="" alt="Призовые чибики" id="prizeChibiImage">
+            </div>
+            <div class="item-content">
+                <div class="item-title">Призовые</div>
+            </div>
+            <div class="collection-count" id="prizeCount">x0</div>
+        </div>
+        
         <div class="subtitle">Статьи</div>
         
         <div class="article-card">
@@ -448,7 +475,7 @@
                 <img src="https://i.ibb.co/sJVz9tH3/IMG-6876.png" alt="Статья">
             </div>
             <div class="article-title">Как работают кости?</div>
-            <a href="https://telegra.ph/Kak-rabotayut-kosti--CHIBIKI-11-10" target="_blank" class="article-link">Читать</a>
+            <a href="https://example.com" target="_blank" class="article-link">Читать</a>
         </div>
     </div>
 
@@ -473,6 +500,18 @@
         </div>
     </div>
 
+    <div class="collection-screen hidden" id="prizeCollectionScreen">
+        <div class="header">
+            <div class="header-title">
+                Призовые чибики
+                <span class="collection-count-header" id="prizeProgressText">x0</span>
+            </div>
+        </div>
+        
+        <div class="chibi-grid" id="prizeChibiGrid">
+        </div>
+    </div>
+
     <script>
         const progressBar = document.getElementById('progress');
         const loadingScreen = document.getElementById('loadingScreen');
@@ -480,23 +519,31 @@
         const userAvatar = document.getElementById('userAvatar');
         const commonChibisBtn = document.getElementById('commonChibisBtn');
         const secretChibisBtn = document.getElementById('secretChibisBtn');
+        const prizeChibisBtn = document.getElementById('prizeChibisBtn');
         const commonCollectionScreen = document.getElementById('commonCollectionScreen');
         const secretCollectionScreen = document.getElementById('secretCollectionScreen');
+        const prizeCollectionScreen = document.getElementById('prizeCollectionScreen');
         const commonChibiGrid = document.getElementById('commonChibiGrid');
         const secretChibiGrid = document.getElementById('secretChibiGrid');
+        const prizeChibiGrid = document.getElementById('prizeChibiGrid');
         const commonChibiImage = document.getElementById('commonChibiImage');
         const secretChibiImage = document.getElementById('secretChibiImage');
+        const prizeChibiImage = document.getElementById('prizeChibiImage');
         const secretTitle = document.getElementById('secretTitle');
         const commonPercentage = document.getElementById('commonPercentage');
+        const prizeCount = document.getElementById('prizeCount');
         const commonProgressText = document.getElementById('commonProgressText');
+        const prizeProgressText = document.getElementById('prizeProgressText');
         
         let userData = {
             collectedChibis: [],
-            secretChibis: []
+            secretChibis: [],
+            prizeChibis: []
         };
         
         let allCommonChibis = [];
         let allSecretChibis = [];
+        let allPrizeChibis = [];
         
         // ВСТРОЕННЫЙ URL БОТА
         const BOT_API_URL = 'https://chibi-bot-3d4x.onrender.com';
@@ -524,6 +571,9 @@
             if (window.Telegram && window.Telegram.WebApp) {
                 Telegram.WebApp.ready();
                 
+                // Устанавливаем полноэкранный режим
+                Telegram.WebApp.expand();
+                
                 const user = Telegram.WebApp.initDataUnsafe.user;
                 if (user) {
                     if (user.photo_url) {
@@ -536,8 +586,6 @@
                     // ОБРАБОТКА КНОПКИ BACK В ТЕЛЕГРАМ
                     Telegram.WebApp.BackButton.onClick(handleBackButton);
                 }
-                
-                Telegram.WebApp.expand();
             }
         }
         
@@ -548,12 +596,15 @@
                 showMainScreen();
             } else if (!secretCollectionScreen.classList.contains('hidden')) {
                 showMainScreen();
+            } else if (!prizeCollectionScreen.classList.contains('hidden')) {
+                showMainScreen();
             }
         }
         
         function showMainScreen() {
             commonCollectionScreen.classList.add('hidden');
             secretCollectionScreen.classList.add('hidden');
+            prizeCollectionScreen.classList.add('hidden');
             mainScreen.classList.remove('hidden');
             mainScreen.style.opacity = '1';
             
@@ -586,6 +637,15 @@
             const percentage = calculateCollectionPercentage();
             commonPercentage.textContent = `${percentage}%`;
             commonProgressText.textContent = `${percentage}%`;
+            
+            // Обновляем счетчик призовых
+            if (userData.prizeChibis && userData.prizeChibis.length > 0) {
+                prizeCount.textContent = `x${userData.prizeChibis.length}`;
+                prizeProgressText.textContent = `x${userData.prizeChibis.length}`;
+                prizeChibisBtn.style.display = 'flex';
+            } else {
+                prizeChibisBtn.style.display = 'none';
+            }
         }
         
         async function loadUserCollection() {
@@ -609,8 +669,10 @@
                             
                             userData.collectedChibis = collection.common || [];
                             userData.secretChibis = collection.secret || [];
+                            userData.prizeChibis = collection.prize || [];
                             allCommonChibis = collection.all_common || [];
                             allSecretChibis = collection.all_secret || [];
+                            allPrizeChibis = collection.all_prize || [];
                             updateMainScreenImages();
                             updateCollectionProgress();
                         } else {
@@ -645,6 +707,14 @@
                 console.log('Установлено изображение секретного чибика:', secretImageUrl);
             } else {
                 secretChibisBtn.style.display = 'none';
+            }
+            
+            // Обновляем изображение призовых чибиков
+            if (userData.prizeChibis.length > 0) {
+                const randomPrize = userData.prizeChibis[Math.floor(Math.random() * userData.prizeChibis.length)];
+                const prizeImageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/prize/${randomPrize.replace(/ /g, '_')}.png`;
+                prizeChibiImage.src = prizeImageUrl;
+                console.log('Установлено изображение призового чибика:', prizeImageUrl);
             }
         }
         
@@ -715,6 +785,19 @@
             });
         }
         
+        function loadPrizeCollection() {
+            prizeChibiGrid.innerHTML = '';
+            console.log('Загрузка призовых чибиков. Всего:', allPrizeChibis.length);
+            
+            allPrizeChibis.forEach(chibiName => {
+                const isCollected = userData.prizeChibis.includes(chibiName);
+                const chibiCard = createChibiCard(chibiName, isCollected, 'prize');
+                prizeChibiGrid.appendChild(chibiCard);
+            });
+            
+            updateCollectionProgress();
+        }
+        
         // Обработчики событий
         commonChibisBtn.addEventListener('click', function() {
             vibrate();
@@ -728,6 +811,12 @@
             loadSecretCollection();
         });
         
+        prizeChibisBtn.addEventListener('click', function() {
+            vibrate();
+            showCollectionScreen(prizeCollectionScreen);
+            loadPrizeCollection();
+        });
+        
         async function loadChibiLists() {
             try {
                 console.log('Загрузка списков чибиков...');
@@ -736,7 +825,8 @@
                     const data = await response.json();
                     allCommonChibis = data.common || [];
                     allSecretChibis = data.secret || [];
-                    console.log('Загружено обычных:', allCommonChibis.length, 'секретных:', allSecretChibis.length);
+                    allPrizeChibis = data.prize || [];
+                    console.log('Загружено обычных:', allCommonChibis.length, 'секретных:', allSecretChibis.length, 'призовых:', allPrizeChibis.length);
                 } else {
                     console.error('Ошибка загрузки списков чибиков:', response.status);
                 }
