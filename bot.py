@@ -468,24 +468,29 @@ class ChibiBot:
         user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
         
         if not user_data:
-            return {"common": [], "secret": []}
+            return {"common": [], "secret": [], "prize": []}
         
         user_chibis = user_data.get('chibis', [])
         
         common_collected = []
         secret_collected = []
+        prize_collected = []
         
         for chibi in set(user_chibis):
             if chibi in self.all_common_chibis:
                 common_collected.append(chibi)
             elif chibi in self.all_secret_chibis:
                 secret_collected.append(chibi)
+            elif chibi in self.all_prize_chibis:
+                prize_collected.append(chibi)
         
         return {
             "common": common_collected,
             "secret": secret_collected,
+            "prize": prize_collected,
             "all_common": self.all_common_chibis,
-            "all_secret": self.all_secret_chibis
+            "all_secret": self.all_secret_chibis,
+            "all_prize": self.all_prize_chibis
         }
 
     def setup_flask_routes(self):
@@ -514,7 +519,8 @@ class ChibiBot:
             try:
                 return jsonify({
                     "common": self.all_common_chibis,
-                    "secret": self.all_secret_chibis
+                    "secret": self.all_secret_chibis,
+                    "prize": self.all_prize_chibis
                 })
             except Exception as e:
                 logger.error(f"Ошибка получения списка чибиков: {e}")
