@@ -1393,7 +1393,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    btn_view = types.InlineKeyboardButton("👀 Просмотр", callback_data="view_collection")
+                    btn_view = types.InlineKeyboardButton("👀 Просмотр", web_app=types.WebAppInfo(url="https://therootishere00-ux.github.io/Chibi-bot/"))
                     markup.add(btn_view)
                     
                     if chibis:
@@ -1846,38 +1846,36 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    prize_file_path, _, prize_rarity = self.get_prize_chibi(chibi_name)
+                    is_prize_chibi = chibi_name in self.all_prize_chibis
                     
-                    if is_admin and prize_file_path is not None:
-                        sticker_id = "CAACAgIAAxkBAAE9l5hpEIdq0Z0LEa7UxgJtrNNZtwABDzQAAttHAALpzBBK7BbFlNYkVyw2BA"
-                        self.bot.send_sticker(call.message.chat.id, sticker_id)
+                    if is_admin and is_prize_chibi:
+                        prize_file_path, _, _ = self.get_prize_chibi(chibi_name)
                         
-                        sender_name = call.from_user.first_name or "Админ"
-                        sender_text = f"""*🍀 Эй, {target_name}!*
-_Ты капец везучий, ведь только что_ *ВЫИГРАЛ В КОНКУРСЕ!*
-_•••••••••••••••_
-+ ♦️* {chibi_name}*"""
-                        
-                        markup = types.InlineKeyboardMarkup()
-                        btn_view = types.InlineKeyboardButton("Глянуть", callback_data="warehouse_chibis_1")
-                        markup.add(btn_view)
-                        
-                        sent_message = self.bot.send_message(
-                            call.message.chat.id,
-                            sender_text,
-                            reply_markup=markup,
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-                        
-                        sent_message = self.bot.send_message(
-                            target_telegram_id,
-                            sender_text,
-                            reply_markup=markup,
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
-                        
+                        if prize_file_path:
+                            prize_text = f"""*🍀 Эй, {target_name}!* 
+_Кажется, ты выиграл в розыгрыше! Поздравляю. Ты получаешь:_
+♦️*{chibi_name}!* 
+_Спасибо за участие!_"""
+                            
+                            with open(prize_file_path, 'rb') as photo:
+                                sent_message = self.bot.send_photo(
+                                    target_telegram_id,
+                                    photo,
+                                    caption=prize_text,
+                                    parse_mode='Markdown'
+                                )
+                                self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
+                            
+                            sender_text = f"""*✨ Призовой чибик отправлен!*
+{target_name} получил призовой чибик {chibi_name}!"""
+                            
+                            sent_message = self.bot.send_message(
+                                call.message.chat.id,
+                                sender_text,
+                                parse_mode='Markdown'
+                            )
+                            self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                            
                     else:
                         sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
                         self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
@@ -1920,27 +1918,6 @@ _•••••••••••••••_
                         del self.gift_selections[telegram_id_str]
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
-                    
-                elif call.data == "view_collection":
-                    web_app_url = "https://therootishere00-ux.github.io/Chibi-bot/"
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    btn_open = types.InlineKeyboardButton("📱 Открыть коллекцию", web_app=web_app_url)
-                    btn_back = types.InlineKeyboardButton("Назад", callback_data="warehouse_chibis_1")
-                    markup.add(btn_open)
-                    markup.add(btn_back)
-                    
-                    collection_text = """✨ *Просмотр коллекции*
-                    
-Открой мини-приложение чтобы посмотреть свою коллекцию в красивом интерфейсе!"""
-                    
-                    self.bot.edit_message_text(
-                        collection_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
                     
                 elif call.data == "chibi_click":
                     self.bot.answer_callback_query(call.id)
