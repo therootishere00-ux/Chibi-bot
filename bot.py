@@ -13,291 +13,199 @@ from pymongo import MongoClient
 from bson import ObjectId
 from flask_cors import CORS
 
-# Конфигурация
-BOT_CONFIG = {
-    'telegram_channel': 'https://t.me/chibeki_official'
-}
+from config import BOT_CONFIG, BOT_TEXTS
 
-BOT_TEXTS = {
-    'welcome': """*Приветствую, {name}!* 
-Добро пожаловать в мир чибиков! Здесь ты можешь собирать свою коллекцию, выполнять задания и обмениваться чибиками с друзьями!
-
-*Основные команды:*
-/chibi - Получить случайного чибика
-/task - Выполнить задание
-/menu - Открыть меню
-/mart - Магазин предметов
-/dice - Игра в кости
-/gift - Подарить чибика другу
-/balance - Проверить баланс
-/myid - Узнать свой ID""",
-
-    'already_started': """*С возвращением!* 
-Рад снова тебя видеть! Используй /menu для доступа ко всем функциям."""
-}
-
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
         
-        # Тестовые пользователи (админы)
         self.test_users = ['tmkazavr', 'ya_admin7']
         
-        # Инициализация Flask для веб-интерфейса
         if "RENDER" in os.environ:
             self.app = Flask(__name__)
-            CORS(self.app)  # Разрешаем CORS для всех доменов
-            logger.info("Flask app initialized with CORS")
+            CORS(self.app)
         
-        # Подключение к MongoDB
         self.mongo_uri = os.getenv('MONGODB_URI')
         if not self.mongo_uri:
-            logger.error("MONGODB_URI not found!")
-            raise ValueError("MONGODB_URI not found")
+            logger.error("MONGODB_URI не найден!")
+            raise ValueError("MONGODB_URI не найден")
         
         try:
             self.client = MongoClient(self.mongo_uri)
             self.db = self.client.chibibot
             self.users_collection = self.db.users
-            logger.info("✅ Successfully connected to MongoDB")
+            logger.info("✅ Успешное подключение к MongoDB")
         except Exception as e:
-            logger.error(f"❌ MongoDB connection error: {e}")
+            logger.error(f"❌ Ошибка подключения к MongoDB: {e}")
             raise
         
-        # Загрузка списков чибиков
         self.all_common_chibis = self._scan_chibis_folder("chibis/common")
-        self.all_secret_chibis = self._scan_chibis_folder("chibis/secret") 
+        self.all_secret_chibis = self._scan_chibis_folder("chibis/secret")
         self.all_prize_chibis = self._scan_chibis_folder("chibis/prize")
         
-        logger.info(f"Loaded {len(self.all_common_chibis)} common chibis")
-        logger.info(f"Loaded {len(self.all_secret_chibis)} secret chibis") 
-        logger.info(f"Loaded {len(self.all_prize_chibis)} prize chibis")
-        
-        # Инициализация коллекций и админов
         self._init_collections()
         self._init_admin_users()
         
-        # Временные хранилища
         self.used_ids = set()
         self.gift_selections = {}
         self.message_owners = {}
+        self.waiting_for_coins = {}
         
     def _scan_chibis_folder(self, folder_path):
-        """Сканирует папку с чибиками и возвращает список имен"""
         if not os.path.exists(folder_path):
-            logger.warning(f"Folder {folder_path} not found!")
+            logger.error(f"Папка {folder_path} не найдена!")
             return []
         
-        try:
-            chibi_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.png')]
-            chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
-            logger.info(f"Found {len(chibi_names)} chibis in {folder_path}")
-            return sorted(chibi_names)
-        except Exception as e:
-            logger.error(f"Error scanning folder {folder_path}: {e}")
-            return []
+        chibi_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.png')]
+        chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
+        return sorted(chibi_names)
     
     def _init_admin_users(self):
-        """Инициализирует администраторов"""
         for username in self.test_users:
-            try:
-                admin_user = self.users_collection.find_one({"username": username})
-                if admin_user:
-                    # Админы получают всех чибиков
-                    all_chibis = self.all_common_chibis + self.all_secret_chibis + self.all_prize_chibis
-                    
-                    self.users_collection.update_one(
-                        {"username": username},
-                        {"$set": {
-                            "chibis": all_chibis,
-                            "coins": 999999,
-                            "items": {"🧧 Чиби-пак": 99},
-                            "is_admin": True
-                        }}
-                    )
-                    logger.info(f"✅ Admin {username} initialized")
-                else:
-                    logger.warning(f"Admin user {username} not found in database")
-            except Exception as e:
-                logger.error(f"Error initializing admin {username}: {e}")
+            admin_user = self.users_collection.find_one({"username": username})
+            if admin_user:
+                all_chibis = self.all_common_chibis + self.all_secret_chibis + self.all_prize_chibis
+                chibi_timestamps = {chibi: datetime.now() for chibi in all_chibis}
+                
+                self.users_collection.update_one(
+                    {"username": username},
+                    {"$set": {
+                        "chibis": all_chibis,
+                        "chibi_timestamps": chibi_timestamps,
+                        "coins": 999999,
+                        "items": {"🧧 Чиби-пак": 99},
+                        "infinite_chibis": True
+                    }}
+                )
+                logger.info(f"✅ Админ {username} инициализирован")
             
     def _init_collections(self):
-        """Создает индексы в базе данных"""
-        try:
-            self.users_collection.create_index("telegram_id", unique=True)
-            self.users_collection.create_index("user_id", unique=True)
-            logger.info("✅ Database indexes created")
-        except Exception as e:
-            logger.error(f"Error creating indexes: {e}")
+        self.users_collection.create_index("telegram_id", unique=True)
+        self.users_collection.create_index("user_id", unique=True)
             
     def is_test_user(self, username):
-        """Проверяет, является ли пользователь тестовым/админом"""
         return username in self.test_users if username else False
         
     def is_banned(self, user_id):
-        """Проверяет, забанен ли пользователь"""
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-            if user_data and user_data.get('banned_until'):
-                if datetime.now() < user_data['banned_until']:
-                    return True
-                else:
-                    # Разбан по истечении времени
-                    self.users_collection.update_one(
-                        {"telegram_id": str(user_id)},
-                        {"$unset": {"banned_until": ""}}
-                    )
-            return False
-        except Exception as e:
-            logger.error(f"Error checking ban status: {e}")
-            return False
+        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
+        if user_data and user_data.get('banned_until'):
+            if datetime.now() < user_data['banned_until']:
+                return True
+            else:
+                self.users_collection.update_one(
+                    {"telegram_id": str(user_id)},
+                    {"$unset": {"banned_until": ""}}
+                )
+        return False
         
     def clear_user_data(self, telegram_id_str):
-        """Очищает данные пользователя"""
-        try:
-            self.users_collection.update_one(
-                {"telegram_id": telegram_id_str},
-                {"$set": {
-                    "chibis": [],
-                    "items": {"🧧 Чиби-пак": 1},
-                    "coins": 0,
-                    "chibi_timestamps": {},
-                    "last_chibi_time": None,
-                    "last_task_time": None,
-                    "last_task_type": None,
-                    "last_bonus_time": None,
-                    "current_task": None
-                }}
-            )
-            logger.info(f"User data cleared for {telegram_id_str}")
-        except Exception as e:
-            logger.error(f"Error clearing user data: {e}")
+        self.users_collection.update_one(
+            {"telegram_id": telegram_id_str},
+            {"$set": {
+                "chibis": [],
+                "items": {"🧧 Чиби-пак": 1},
+                "coins": 0,
+                "chibi_timestamps": {},
+                "last_chibi_time": None,
+                "last_task_time": None,
+                "last_task_type": None,
+                "last_bonus_time": None,
+                "current_task": None,
+                "infinite_chibis": False
+            }}
+        )
             
     def ban_user(self, user_id, duration_days=7):
-        """Банит пользователя"""
-        try:
-            telegram_id_str = str(user_id)
-            ban_until = datetime.now() + timedelta(days=duration_days)
-            
-            self.users_collection.update_one(
-                {"telegram_id": telegram_id_str},
-                {"$set": {"banned_until": ban_until}}
-            )
-            logger.info(f"User {telegram_id_str} banned for {duration_days} days")
-        except Exception as e:
-            logger.error(f"Error banning user: {e}")
+        telegram_id_str = str(user_id)
+        ban_until = datetime.now() + timedelta(days=duration_days)
+        
+        self.users_collection.update_one(
+            {"telegram_id": telegram_id_str},
+            {"$set": {"banned_until": ban_until}}
+        )
         
     def unban_user(self, user_id):
-        """Разбанивает пользователя"""
-        try:
-            telegram_id_str = str(user_id)
-            self.users_collection.update_one(
-                {"telegram_id": telegram_id_str},
-                {"$unset": {"banned_until": ""}}
-            )
-            logger.info(f"User {telegram_id_str} unbanned")
-        except Exception as e:
-            logger.error(f"Error unbanning user: {e}")
+        telegram_id_str = str(user_id)
+        self.users_collection.update_one(
+            {"telegram_id": telegram_id_str},
+            {"$unset": {"banned_until": ""}}
+        )
             
     def get_ban_time_left(self, user_id):
-        """Возвращает оставшееся время бана"""
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-            if user_data and user_data.get('banned_until'):
-                time_left = user_data['banned_until'] - datetime.now()
-                return max(1, time_left.days)
-            return 0
-        except Exception as e:
-            logger.error(f"Error getting ban time: {e}")
-            return 0
+        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
+        if user_data and user_data.get('banned_until'):
+            time_left = user_data['banned_until'] - datetime.now()
+            return max(1, time_left.days)
+        return 0
         
     def format_time(self, seconds):
-        """Форматирует время в читаемый вид"""
         hours = seconds // 3600
         minutes = (seconds % 3600) // 60
         return f"{hours}ч {minutes:02d}м"
         
     def check_chibi_cooldown(self, user_id):
-        """Проверяет кулдаун на получение чибика"""
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-            if not user_data:
-                return None
-                
-            if self.is_test_user(user_data.get('username')):
-                return None
-                
-            if user_data.get('last_chibi_time'):
-                last_time = user_data['last_chibi_time']
-                time_passed = (datetime.now() - last_time).total_seconds()
-                if time_passed < 3 * 3600:  # 3 часа
-                    return 3 * 3600 - time_passed
+        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
+        if not user_data:
             return None
-        except Exception as e:
-            logger.error(f"Error checking chibi cooldown: {e}")
+            
+        if self.is_test_user(user_data.get('username')):
             return None
+            
+        if user_data.get('last_chibi_time'):
+            last_time = user_data['last_chibi_time']
+            time_passed = (datetime.now() - last_time).total_seconds()
+            if time_passed < 3 * 3600:
+                return 3 * 3600 - time_passed
+        return None
         
     def check_task_cooldown(self, user_id):
-        """Проверяет кулдаун на задания"""
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-            if not user_data:
-                return None
-                
-            if self.is_test_user(user_data.get('username')):
-                return None
-                
-            if user_data.get('last_task_time'):
-                last_time = user_data['last_task_time']
-                task_type = user_data.get('last_task_type', 'completed')
-                
-                time_passed = (datetime.now() - last_time).total_seconds()
-                
-                if task_type == 'completed':
-                    cooldown = 4 * 3600  # 4 часа
-                else:
-                    cooldown = 5.5 * 3600  # 5.5 часов
-                    
-                if time_passed < cooldown:
-                    return cooldown - time_passed
+        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
+        if not user_data:
             return None
-        except Exception as e:
-            logger.error(f"Error checking task cooldown: {e}")
+            
+        if self.is_test_user(user_data.get('username')):
             return None
+            
+        if user_data.get('last_task_time'):
+            last_time = user_data['last_task_time']
+            task_type = user_data.get('last_task_type', 'completed')
+            
+            time_passed = (datetime.now() - last_time).total_seconds()
+            
+            if task_type == 'completed':
+                cooldown = 4 * 3600
+            else:
+                cooldown = 5.5 * 3600
+                
+            if time_passed < cooldown:
+                return cooldown - time_passed
+        return None
         
     def check_bonus_cooldown(self, user_id):
-        """Проверяет кулдаун на ежедневный бонус"""
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-            if not user_data:
-                return None
-                
-            if self.is_test_user(user_data.get('username')):
-                return None
-                
-            if user_data.get('last_bonus_time'):
-                now = datetime.now()
-                last_bonus = user_data['last_bonus_time']
-                
-                # Проверяем, получал ли пользователь бонус сегодня
-                if last_bonus.date() == now.date():
-                    next_midnight = datetime(now.year, now.month, now.day) + timedelta(days=1)
-                    time_left = next_midnight - now
-                    return time_left.total_seconds()
+        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
+        if not user_data:
             return None
-        except Exception as e:
-            logger.error(f"Error checking bonus cooldown: {e}")
+            
+        if self.is_test_user(user_data.get('username')):
             return None
+            
+        if user_data.get('last_bonus_time'):
+            now = datetime.now()
+            last_bonus = user_data['last_bonus_time']
+            
+            moscow_time = now + timedelta(hours=3)
+            last_bonus_moscow = last_bonus + timedelta(hours=3)
+            
+            if last_bonus_moscow.date() == moscow_time.date():
+                next_midnight = datetime(moscow_time.year, moscow_time.month, moscow_time.day) + timedelta(days=1)
+                time_left = next_midnight - moscow_time
+                return time_left.total_seconds()
+        return None
         
     def generate_unique_user_id(self):
-        """Генерирует уникальный ID пользователя"""
         attempts = 0
         while attempts < 100:
             letter = random.choice(string.ascii_uppercase)
@@ -310,267 +218,191 @@ class ChibiBot:
                 self.used_ids.add(user_id)
                 return user_id
             attempts += 1
-        return f"U{random.randint(10000, 99999)}"
+        return f"U{random.randint(1000, 9999)}"
     
     def get_or_create_user(self, telegram_id, first_name=None, username=None):
-        """Получает или создает пользователя"""
         telegram_id_str = str(telegram_id)
         
         if self.is_banned(telegram_id):
             return None, False
             
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+        
+        if user_data:
+            self.users_collection.update_one(
+                {"telegram_id": telegram_id_str},
+                {"$set": {"last_active": datetime.now()}}
+            )
+            return user_data, False
+        else:
+            user_id = self.generate_unique_user_id()
+            user_data = {
+                "telegram_id": telegram_id_str,
+                "user_id": user_id,
+                "first_name": first_name,
+                "username": username,
+                "registration_date": datetime.now(),
+                "last_active": datetime.now(),
+                "chibis": [],
+                "items": {"🧧 Чиби-пак": 1},
+                "coins": 0,
+                "chibi_timestamps": {},
+                "last_chibi_time": None,
+                "last_task_time": None,
+                "last_task_type": None,
+                "last_bonus_time": None,
+                "current_task": None,
+                "infinite_chibis": False
+            }
             
-            if user_data:
-                # Обновляем время последней активности
-                self.users_collection.update_one(
-                    {"telegram_id": telegram_id_str},
-                    {"$set": {"last_active": datetime.now()}}
-                )
-                return user_data, False
-            else:
-                # Создаем нового пользователя
-                user_id = self.generate_unique_user_id()
-                user_data = {
-                    "telegram_id": telegram_id_str,
-                    "user_id": user_id,
-                    "first_name": first_name,
-                    "username": username,
-                    "registration_date": datetime.now(),
-                    "last_active": datetime.now(),
-                    "chibis": [],
-                    "items": {"🧧 Чиби-пак": 1},
-                    "coins": 0,
-                    "chibi_timestamps": {},
-                    "last_chibi_time": None,
-                    "last_task_time": None,
-                    "last_task_type": None,
-                    "last_bonus_time": None,
-                    "current_task": None,
-                    "is_admin": False
-                }
-                
-                if self.is_test_user(username):
-                    user_data["coins"] = 1000
-                    user_data["items"]["🧧 Чиби-пак"] = 5
-                    user_data["is_admin"] = True
-                
-                self.users_collection.insert_one(user_data)
-                logger.info(f"New user created: {user_id}")
-                return user_data, True
-                
-        except Exception as e:
-            logger.error(f"Error getting/creating user: {e}")
-            return None, False
+            if self.is_test_user(username):
+                user_data["coins"] = 1000
+                user_data["items"]["🧧 Чиби-пак"] = 5
+                user_data["infinite_chibis"] = True
+            
+            self.users_collection.insert_one(user_data)
+            logger.info(f"Новый пользователь: {user_id}")
+            return user_data, True
 
     def check_user_started(self, user_id):
-        """Проверяет, запускал ли пользователь бота"""
         user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
         return user_data is not None
 
     def send_start_suggestion(self, chat_id, message_id=None):
-        """Отправляет предложение запустить бота"""
         text = "⭐️ *Советую сначала запустить бота*"
         markup = types.InlineKeyboardMarkup()
         btn_start = types.InlineKeyboardButton("Запуск", url=f"https://t.me/{self.bot.get_me().username}?start=start")
         markup.add(btn_start)
         
-        try:
-            if message_id:
+        if message_id:
+            try:
                 self.bot.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode='Markdown')
-            else:
+            except:
                 self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
-        except Exception as e:
-            logger.error(f"Error sending start suggestion: {e}")
+        else:
+            self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
 
     def add_chibi_to_user(self, telegram_id, chibi_name, rarity="Common"):
-        """Добавляет чибика пользователю"""
         telegram_id_str = str(telegram_id)
         
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-            if not user_data:
-                return
-                
-            if user_data.get('is_admin'):
-                return
-                
-            current_chibis = user_data.get('chibis', [])
-            current_timestamps = user_data.get('chibi_timestamps', {})
+        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+        if not user_data:
+            return
             
-            current_chibis.append(chibi_name)
-            current_timestamps[chibi_name] = datetime.now()
+        if user_data.get('infinite_chibis'):
+            return
             
-            self.users_collection.update_one(
-                {"telegram_id": telegram_id_str},
-                {"$set": {
-                    "chibis": current_chibis,
-                    "chibi_timestamps": current_timestamps
-                }}
-            )
-            logger.info(f"Chibi {chibi_name} added to user {telegram_id_str}")
-        except Exception as e:
-            logger.error(f"Error adding chibi to user: {e}")
-
-    def remove_chibi_from_user(self, telegram_id, chibi_name):
-        """Удаляет чибика у пользователя"""
-        telegram_id_str = str(telegram_id)
+        current_chibis = user_data.get('chibis', [])
+        current_timestamps = user_data.get('chibi_timestamps', {})
         
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-            if not user_data:
-                return False
-                
-            if user_data.get('is_admin'):
-                return True
-                
-            current_chibis = user_data.get('chibis', [])
-            current_timestamps = user_data.get('chibi_timestamps', {})
-            
-            if chibi_name in current_chibis:
-                current_chibis.remove(chibi_name)
-                if chibi_name in current_timestamps:
-                    del current_timestamps[chibi_name]
-                
-                self.users_collection.update_one(
-                    {"telegram_id": telegram_id_str},
-                    {"$set": {
-                        "chibis": current_chibis,
-                        "chibi_timestamps": current_timestamps
-                    }}
-                )
-                logger.info(f"Chibi {chibi_name} removed from user {telegram_id_str}")
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Error removing chibi from user: {e}")
-            return False
+        current_chibis.append(chibi_name)
+        current_timestamps[chibi_name] = datetime.now()
+        
+        self.users_collection.update_one(
+            {"telegram_id": telegram_id_str},
+            {"$set": {
+                "chibis": current_chibis,
+                "chibi_timestamps": current_timestamps
+            }}
+        )
 
     def get_random_chibi(self, from_pack=False):
-        """Возвращает случайного чибика"""
-        try:
-            if from_pack and random.random() <= 0.05:  # 5% шанс на секретного
-                chibi_folder = "chibis/secret"
-                rarity = "Secret"
-            else:
-                chibi_folder = "chibis/common"
-                rarity = "Common"
-            
-            if not os.path.exists(chibi_folder):
-                logger.error(f"Folder {chibi_folder} not found!")
-                return None, None, "Common"
-            
-            chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
-            
-            if not chibi_files:
-                logger.error(f"No PNG files in folder {chibi_folder}!")
-                return None, None, "Common"
-            
-            random_file = random.choice(chibi_files)
-            file_path = os.path.join(chibi_folder, random_file)
-            file_name = os.path.splitext(random_file)[0]
-            formatted_name = file_name.replace('_', ' ')
-            
-            logger.info(f"Selected chibi: {formatted_name} (rarity: {rarity})")
-            return file_path, formatted_name, rarity
-            
-        except Exception as e:
-            logger.error(f"Error getting random chibi: {e}")
+        if from_pack and random.random() <= 0.05:
+            chibi_folder = "chibis/secret"
+        else:
+            chibi_folder = "chibis/common"
+        
+        if not os.path.exists(chibi_folder):
+            logger.error(f"Папка {chibi_folder} не найдена!")
             return None, None, "Common"
+        
+        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
+        
+        if not chibi_files:
+            logger.error(f"В папке {chibi_folder} нет PNG файлов!")
+            return None, None, "Common"
+        
+        random_file = random.choice(chibi_files)
+        file_path = os.path.join(chibi_folder, random_file)
+        file_name = os.path.splitext(random_file)[0]
+        formatted_name = file_name.replace('_', ' ')
+        
+        rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
+        
+        return file_path, formatted_name, rarity
 
     def get_prize_chibi(self, chibi_name):
-        """Возвращает призового чибика"""
-        try:
-            chibi_folder = "chibis/prize"
-            
-            if not os.path.exists(chibi_folder):
-                logger.error(f"Folder {chibi_folder} not found!")
-                return None, None, "Prize"
-            
-            file_path = os.path.join(chibi_folder, f"{chibi_name.replace(' ', '_')}.png")
-            if not os.path.exists(file_path):
-                logger.error(f"Prize chibi {chibi_name} not found!")
-                return None, None, "Prize"
-            
-            return file_path, chibi_name, "Prize"
-        except Exception as e:
-            logger.error(f"Error getting prize chibi: {e}")
+        chibi_folder = "chibis/prize"
+        
+        if not os.path.exists(chibi_folder):
+            logger.error(f"Папка {chibi_folder} не найдена!")
             return None, None, "Prize"
+        
+        file_path = os.path.join(chibi_folder, f"{chibi_name}.png")
+        if not os.path.exists(file_path):
+            logger.error(f"Призовой чибик {chibi_name} не найден!")
+            return None, None, "Prize"
+        
+        return file_path, chibi_name, "Prize"
 
     def get_all_common_chibis(self):
-        """Возвращает список всех обычных чибиков"""
         return self.all_common_chibis
 
     def get_chibi_count(self, telegram_id, chibi_name):
-        """Возвращает количество определенного чибика у пользователя"""
         telegram_id_str = str(telegram_id)
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-            if not user_data:
-                return 0
-                
-            if user_data.get('is_admin'):
-                return 1
-                
-            chibis = user_data.get('chibis', [])
-            return chibis.count(chibi_name)
-        except Exception as e:
-            logger.error(f"Error getting chibi count: {e}")
+        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+        if not user_data:
             return 0
+            
+        if user_data.get('infinite_chibis'):
+            return 1
+            
+        chibis = user_data.get('chibis', [])
+        return chibis.count(chibi_name)
 
     def generate_task(self, telegram_id):
-        """Генерирует задание для пользователя"""
         telegram_id_str = str(telegram_id)
         
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-            if not user_data:
-                return None
-                
-            if user_data.get('current_task') is not None:
-                return user_data['current_task']
-            
-            # Генерация задания
-            emojis = ['🐊', '🐸', '🤖', '⛄️', '🐲', '👽']
-            names = ['Грирт', 'Таррек', 'Грит', 'Тарр', 'Крилл', 'Гето', 'Дин', 'Боксо', 'Мерин', 'Хрило', 'Гомадо', 'Грож']
-            phrases = [
-                "Эй, ты! Принеси-ка мне {chibi}, я щедро тебя награжу!",
-                "Приветствую… Очень хочу заполучить {chibi}, если принесешь мне его, в долгу не останусь",
-                "Бурабура, лакуш'н, принеси мне {chibi}, я готов платить"
-            ]
-            
-            _, chibi_name, _ = self.get_random_chibi()
-            if chibi_name is None:
-                chibi_name = "редкого чибика"
-            
-            reward = random.randint(32, 49)
-            emoji = random.choice(emojis)
-            name = random.choice(names)
-            phrase = random.choice(phrases).format(chibi=chibi_name)
-            
-            task_data = {
-                "chibi": chibi_name,
-                "reward": reward,
-                "emoji": emoji,
-                "name": name,
-                "phrase": phrase
-            }
-            
-            self.users_collection.update_one(
-                {"telegram_id": telegram_id_str},
-                {"$set": {"current_task": task_data}}
-            )
-            
-            logger.info(f"Generated task for user {telegram_id_str}: {chibi_name}")
-            return task_data
-            
-        except Exception as e:
-            logger.error(f"Error generating task: {e}")
+        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+        if not user_data:
             return None
+            
+        if user_data.get('current_task') is not None:
+            return user_data['current_task']
+        
+        emojis = ['🐊', '🐸', '🤖', '⛄️', '🐲', '👽']
+        names = ['Грирт', 'Таррек', 'Грит', 'Тарр', 'Крилл', 'Гето', 'Дин', 'Боксо', 'Мерин', 'Хрило', 'Гомадо', 'Грож']
+        phrases = [
+            "Эй, ты! Принеси-ка мне {chibi}, я щедро тебя награжу!",
+            "Приветствую… Очень хочу заполучить {chibi}, если принесешь мне его, в долгу не останусь",
+            "Бурабура, лакуш'н, принеси мне {chibi}, я готов платить"
+        ]
+        
+        _, chibi_name, _ = self.get_random_chibi()
+        if chibi_name is None:
+            chibi_name = "редкого чибика"
+        
+        reward = random.randint(32, 49)
+        emoji = random.choice(emojis)
+        name = random.choice(names)
+        phrase = random.choice(phrases).format(chibi=chibi_name)
+        
+        task_data = {
+            "chibi": chibi_name,
+            "reward": reward,
+            "emoji": emoji,
+            "name": name,
+            "phrase": phrase
+        }
+        
+        self.users_collection.update_one(
+            {"telegram_id": telegram_id_str},
+            {"$set": {"current_task": task_data}}
+        )
+        
+        return task_data
 
     def get_task_text(self, task_data, telegram_id):
-        """Форматирует текст задания"""
         telegram_id_str = str(telegram_id)
         has_chibi = self.get_chibi_count(telegram_id, task_data["chibi"]) > 0
         button_text = "✅ Сдать задание (1/1)" if has_chibi else "Сдать задание (0/1)"
@@ -583,7 +415,6 @@ class ChibiBot:
         return task_text, button_text, has_chibi
 
     def get_paginated_items(self, items_list, page=1, per_page=8):
-        """Разбивает список на страницы"""
         total_pages = max(1, (len(items_list) + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
         
@@ -594,59 +425,43 @@ class ChibiBot:
         return page_items, page, total_pages
 
     def get_user_chibis_paginated(self, telegram_id, page=1, per_page=8):
-        """Возвращает чибиков пользователя с пагинацией"""
         telegram_id_str = str(telegram_id)
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-            if not user_data:
-                return [], 1, 1
-            
-            if user_data.get('is_admin'):
-                all_chibis = self.all_common_chibis + self.all_secret_chibis + self.all_prize_chibis
-                sorted_chibis = [(name, 1) for name in sorted(all_chibis)]
-            else:
-                chibis = user_data.get('chibis', [])
-                chibi_counts = {}
-                for chibi in chibis:
-                    chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
-                
-                sorted_chibis = sorted(
-                    [(name, count) for name, count in chibi_counts.items()],
-                    key=lambda x: (-x[1], x[0])
-                )
-            
-            return self.get_paginated_items(sorted_chibis, page, per_page)
-        except Exception as e:
-            logger.error(f"Error getting user chibis: {e}")
+        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+        if not user_data:
             return [], 1, 1
+        
+        chibis = user_data.get('chibis', [])
+        chibi_counts = {}
+        for chibi in chibis:
+            chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
+        
+        sorted_chibis = sorted(
+            [(name, count) for name, count in chibi_counts.items()],
+            key=lambda x: (-x[1], x[0])
+        )
+        
+        return self.get_paginated_items(sorted_chibis, page, per_page)
 
     def get_user_items_paginated(self, telegram_id, page=1, per_page=8):
-        """Возвращает предметы пользователя с пагинацией"""
         telegram_id_str = str(telegram_id)
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-            if not user_data:
-                return [], 1, 1
-            
-            items = user_data.get('items', {})
-            active_items = {name: count for name, count in items.items() if count > 0}
-            
-            sorted_items = sorted(
-                [(name, count) for name, count in active_items.items()],
-                key=lambda x: (-x[1], x[0])
-            )
-            
-            return self.get_paginated_items(sorted_items, page, per_page)
-        except Exception as e:
-            logger.error(f"Error getting user items: {e}")
+        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+        if not user_data:
             return [], 1, 1
+        
+        items = user_data.get('items', {})
+        active_items = {name: count for name, count in items.items() if count > 0}
+        
+        sorted_items = sorted(
+            [(name, count) for name, count in active_items.items()],
+            key=lambda x: (-x[1], x[0])
+        )
+        
+        return self.get_paginated_items(sorted_items, page, per_page)
 
     def get_user_chibis_for_gift(self, telegram_id, page=1, per_page=6):
-        """Возвращает чибиков для подарка"""
         return self.get_user_chibis_paginated(telegram_id, page, per_page)
 
     def check_message_ownership(self, call):
-        """Проверяет владельца сообщения"""
         if call.message.chat.type == 'private':
             return True
             
@@ -660,123 +475,69 @@ class ChibiBot:
         return True
 
     def get_user_collection_data(self, telegram_id):
-        """Возвращает данные коллекции пользователя для веб-интерфейса"""
         telegram_id_str = str(telegram_id)
+        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
         
-        try:
-            user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-            
-            if not user_data:
-                return {
-                    "common": [],
-                    "secret": [], 
-                    "prize": [],
-                    "all_common": self.all_common_chibis,
-                    "all_secret": self.all_secret_chibis,
-                    "all_prize": self.all_prize_chibis
-                }
-            
-            if user_data.get('is_admin'):
-                return {
-                    "common": self.all_common_chibis,
-                    "secret": self.all_secret_chibis,
-                    "prize": self.all_prize_chibis,
-                    "all_common": self.all_common_chibis,
-                    "all_secret": self.all_secret_chibis,
-                    "all_prize": self.all_prize_chibis
-                }
-            
-            user_chibis = user_data.get('chibis', [])
-            
-            common_collected = []
-            secret_collected = []
-            prize_collected = []
-            
-            for chibi in set(user_chibis):
-                if chibi in self.all_common_chibis:
-                    common_collected.append(chibi)
-                elif chibi in self.all_secret_chibis:
-                    secret_collected.append(chibi)
-                elif chibi in self.all_prize_chibis:
-                    prize_collected.append(chibi)
-            
-            return {
-                "common": common_collected,
-                "secret": secret_collected,
-                "prize": prize_collected,
-                "all_common": self.all_common_chibis,
-                "all_secret": self.all_secret_chibis,
-                "all_prize": self.all_prize_chibis
-            }
-        except Exception as e:
-            logger.error(f"Error getting user collection: {e}")
-            return {
-                "common": [],
-                "secret": [],
-                "prize": [],
-                "all_common": self.all_common_chibis,
-                "all_secret": self.all_secret_chibis,
-                "all_prize": self.all_prize_chibis
-            }
+        if not user_data:
+            return {"common": [], "secret": [], "prize": []}
+        
+        user_chibis = user_data.get('chibis', [])
+        
+        common_collected = []
+        secret_collected = []
+        prize_collected = []
+        
+        for chibi in set(user_chibis):
+            if chibi in self.all_common_chibis:
+                common_collected.append(chibi)
+            elif chibi in self.all_secret_chibis:
+                secret_collected.append(chibi)
+            elif chibi in self.all_prize_chibis:
+                prize_collected.append(chibi)
+        
+        return {
+            "common": common_collected,
+            "secret": secret_collected,
+            "prize": prize_collected,
+            "all_common": self.all_common_chibis,
+            "all_secret": self.all_secret_chibis,
+            "all_prize": self.all_prize_chibis
+        }
 
     def setup_flask_routes(self):
-        """Настраивает Flask endpoints для веб-интерфейса"""
-        
         @self.app.route('/')
         def home():
-            return jsonify({
-                "status": "online",
-                "message": "🤖 Чиби-бот работает с MongoDB и мини-приложением!",
-                "timestamp": datetime.now().isoformat()
-            })
+            return "🤖 Чиби-бот работает с MongoDB и мини-приложением!"
         
         @self.app.route('/get_user_collection', methods=['POST'])
         def get_user_collection():
             try:
                 data = request.get_json()
-                if not data:
-                    return jsonify({"error": "No JSON data provided"}), 400
-                
                 telegram_id = data.get('telegram_id')
                 
                 if not telegram_id:
                     return jsonify({"error": "Telegram ID required"}), 400
                 
-                logger.info(f"Collection request for Telegram ID: {telegram_id}")
                 collection_data = self.get_user_collection_data(telegram_id)
-                
                 return jsonify(collection_data)
                 
             except Exception as e:
-                logger.error(f"Error getting user collection: {e}")
+                logger.error(f"Ошибка получения коллекции: {e}")
                 return jsonify({"error": "Internal server error"}), 500
         
         @self.app.route('/get_all_chibis', methods=['GET'])
         def get_all_chibis():
             try:
-                logger.info("All chibis request received")
                 return jsonify({
                     "common": self.all_common_chibis,
                     "secret": self.all_secret_chibis,
                     "prize": self.all_prize_chibis
                 })
             except Exception as e:
-                logger.error(f"Error getting all chibis: {e}")
+                logger.error(f"Ошибка получения списка чибиков: {e}")
                 return jsonify({"error": "Internal server error"}), 500
 
-        @self.app.route('/health', methods=['GET'])
-        def health_check():
-            return jsonify({
-                "status": "healthy",
-                "timestamp": datetime.now().isoformat(),
-                "common_chibis_count": len(self.all_common_chibis),
-                "secret_chibis_count": len(self.all_secret_chibis),
-                "prize_chibis_count": len(self.all_prize_chibis)
-            })
-
     def setup_handlers(self):
-        """Настраивает обработчики команд бота"""
-        
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
             if message.chat.type != 'private':
@@ -806,37 +567,27 @@ class ChibiBot:
                 
                 if is_new_user:
                     sticker_id = "CAACAgIAAxkBAAE9JsNpAzQZv6b4b-KZ3ftL2Sld0kUjDQAC400AAkuWEEosjitzZk8fzDYE"
-                    welcome_text = BOT_TEXTS['welcome'].format(name=user_name)
                 else:
                     sticker_id = "CAACAgIAAxkBAAE9JstpAzTQNnpt9KcoUte9P7K3CiHpswACmEQAAk-mEEqVynQKXagSVjYE"
-                    welcome_text = BOT_TEXTS['already_started']
                 
                 self.bot.send_sticker(message.chat.id, sticker_id)
                 
                 if is_new_user:
+                    welcome_text = BOT_TEXTS['welcome'].format(name=user_name)
                     markup = types.InlineKeyboardMarkup()
                     btn_channel = types.InlineKeyboardButton(
                         '📢 Наш тгк', 
                         url=BOT_CONFIG['telegram_channel']
                     )
                     markup.add(btn_channel)
-                    sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        welcome_text, 
-                        reply_markup=markup, 
-                        parse_mode='Markdown'
-                    )
+                    sent_message = self.bot.send_message(message.chat.id, welcome_text, reply_markup=markup, parse_mode='Markdown')
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
-                    sent_message = self.bot.send_message(
-                        message.chat.id, 
-                        welcome_text, 
-                        parse_mode='Markdown'
-                    )
-                
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    sent_message = self.bot.send_message(message.chat.id, BOT_TEXTS['already_started'], parse_mode='Markdown')
+                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     
             except Exception as e:
-                logger.error(f"Error in start handler: {e}")
+                logger.error(f"Ошибка в start: {e}")
                 sent_message = self.bot.send_message(
                     message.chat.id,
                     "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
@@ -930,7 +681,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     self.bot.send_message(message.chat.id, lose_text, parse_mode='Markdown')
 
             except Exception as e:
-                logger.error(f"Error in dice handler: {e}")
+                logger.error(f"Ошибка в dice: {e}")
                 sent_message = self.bot.send_message(
                     message.chat.id,
                     "⛓️‍💥* Что-то пошло не так!*",
@@ -973,7 +724,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                 self.bot.reply_to(message, f"✅ *Пользователь забанен на 7 дней!*", parse_mode='Markdown')
                 
             except Exception as e:
-                logger.error(f"Error in ban handler: {e}")
+                logger.error(f"Ошибка бана: {e}")
                 self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['unban'])
@@ -1011,7 +762,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                 self.bot.reply_to(message, f"✅ *Пользователь разбанен!*", parse_mode='Markdown')
                 
             except Exception as e:
-                logger.error(f"Error in unban handler: {e}")
+                logger.error(f"Ошибка разбана: {e}")
                 self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['myid'])
@@ -1045,7 +796,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     self.bot.reply_to(message, response_text, parse_mode='Markdown')
                 
             except Exception as e:
-                logger.error(f"Error in myid handler: {e}")
+                logger.error(f"Ошибка: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
                         message.chat.id,
@@ -1088,7 +839,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     self.bot.reply_to(message, balance_text, parse_mode='Markdown')
                 
             except Exception as e:
-                logger.error(f"Error in balance handler: {e}")
+                logger.error(f"Ошибка: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
                         message.chat.id,
@@ -1139,7 +890,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     self.message_owners[(message.chat.id, reply_msg.message_id)] = str(message.from_user.id)
                 
             except Exception as e:
-                logger.error(f"Error in mart handler: {e}")
+                logger.error(f"Ошибка при открытии лавки: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
                         message.chat.id,
@@ -1232,10 +983,10 @@ _Ты проиграл, все честно. Ставку уже не верну
                         )
                         self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     
-                logger.info(f"Chibi sent: {chibi_name} (Rarity: {rarity})")
+                logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
                     
             except Exception as e:
-                logger.error(f"Error in chibi handler: {e}")
+                logger.error(f"Ошибка при отправке чиби: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
                         message.chat.id,
@@ -1311,7 +1062,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     self.message_owners[(message.chat.id, reply_msg.message_id)] = str(message.from_user.id)
                 
             except Exception as e:
-                logger.error(f"Error in task handler: {e}")
+                logger.error(f"Ошибка при генерации задания: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
                         message.chat.id,
@@ -1372,7 +1123,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     self.message_owners[(message.chat.id, reply_msg.message_id)] = str(message.from_user.id)
                 
             except Exception as e:
-                logger.error(f"Error in menu handler: {e}")
+                logger.error(f"Ошибка при открытии меню: {e}")
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(
                         message.chat.id,
@@ -1463,6 +1214,8 @@ _Ты проиграл, все честно. Ставку уже не верну
                     btn_text = f"{chibi_name}"
                     markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
                 
+                markup.add(types.InlineKeyboardButton("💰 Подарить коины", callback_data="gift_coins"))
+                
                 nav_buttons = []
                 if total_pages > 1:
                     nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
@@ -1483,7 +1236,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                 self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 
             except Exception as e:
-                logger.error(f"Error in gift handler: {e}")
+                logger.error(f"Ошибка при отправке подарка: {e}")
                 sent_message = self.bot.send_message(
                     message.chat.id,
                     "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
@@ -1491,7 +1244,47 @@ _Ты проиграл, все честно. Ставку уже не верну
                 )
                 self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
 
-        # Обработчики callback-запросов
+        @self.bot.message_handler(func=lambda message: True, content_types=['text'])
+        def handle_text_messages(message):
+            telegram_id_str = str(message.from_user.id)
+            
+            if telegram_id_str in self.waiting_for_coins:
+                try:
+                    coin_amount = int(message.text)
+                    
+                    if coin_amount < 1:
+                        self.bot.reply_to(message, "❌ *Число должно быть положительным!*", parse_mode='Markdown')
+                        return
+                        
+                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+                    if not user_data:
+                        return
+                        
+                    if not self.is_test_user(user_data.get('username')):
+                        if user_data.get('coins', 0) < coin_amount:
+                            self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {user_data.get('coins', 0)}💰", parse_mode='Markdown')
+                            return
+                    
+                    gift_data = self.gift_selections.get(telegram_id_str, {})
+                    target_name = gift_data.get("target_name", "пользователь")
+                    
+                    confirm_text = f"""*✨ Дарим {coin_amount} коинов?*
+_Ты уверен, что хочешь этого? Назад вернуть уже не получится_
+_•••••••••••••••_
+Кому: *{target_name}* 
+Сколько: *{coin_amount}*"""
+
+                    markup = types.InlineKeyboardMarkup()
+                    btn_confirm = types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"gift_confirm_coins_{coin_amount}")
+                    btn_cancel = types.InlineKeyboardButton("🙅‍♂️ Отмена", callback_data="gift_cancel")
+                    markup.add(btn_confirm, btn_cancel)
+                    
+                    self.bot.reply_to(message, confirm_text, reply_markup=markup, parse_mode='Markdown')
+                    del self.waiting_for_coins[telegram_id_str]
+                    
+                except ValueError:
+                    self.bot.reply_to(message, "❌ *Введи число!*", parse_mode='Markdown')
+
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
             try:
@@ -1507,8 +1300,14 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     task_data = user_data['current_task']
                     
-                    success = self.remove_chibi_from_user(call.from_user.id, task_data["chibi"])
-                    if not success:
+                    if task_data["chibi"] in user_data.get('chibis', []) or user_data.get('infinite_chibis'):
+                        if not user_data.get('infinite_chibis'):
+                            new_chibis = [chibi for chibi in user_data.get('chibis', []) if chibi != task_data["chibi"]]
+                            self.users_collection.update_one(
+                                {"telegram_id": telegram_id_str},
+                                {"$set": {"chibis": new_chibis}}
+                            )
+                    else:
                         self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
                         return
                     
@@ -1652,16 +1451,15 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    # Кнопка для веб-приложения
-                    btn_view = types.InlineKeyboardButton(
-                        "👀 Просмотр", 
-                        web_app=types.WebAppInfo(url="https://therootishere00-ux.github.io/Chibi-bot/")
-                    )
+                    btn_view = types.InlineKeyboardButton("👀 Просмотр", web_app=types.WebAppInfo(url="https://therootishere00-ux.github.io/Chibi-bot/"))
                     markup.add(btn_view)
                     
                     if chibis:
                         for chibi_name, count in chibis:
-                            btn_text = f"{chibi_name}"
+                            if count > 1:
+                                btn_text = f"{chibi_name} ({count})"
+                            else:
+                                btn_text = chibi_name
                             markup.add(types.InlineKeyboardButton(btn_text, callback_data="chibi_click"))
                     else:
                         markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
@@ -1805,7 +1603,6 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     self.bot.answer_callback_query(call.id, f"🎉 Открыто {count} Чиби-пак(ов)!")
                     
-                    # Возвращаемся к списку предметов
                     items, current_page, total_pages = self.get_user_items_paginated(call.from_user.id, 1)
                     
                     items_text = f"""*📦 Твои предметы* 
@@ -2013,6 +1810,8 @@ _Ты проиграл, все честно. Ставку уже не верну
                         btn_text = f"{chibi_name}"
                         markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
                     
+                    markup.add(types.InlineKeyboardButton("💰 Подарить коины", callback_data="gift_coins"))
+                    
                     nav_buttons = []
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
@@ -2031,6 +1830,92 @@ _Ты проиграл, все честно. Ставку уже не верну
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
+                    
+                elif call.data == "gift_coins":
+                    telegram_id_str = str(call.from_user.id)
+                    
+                    if telegram_id_str not in self.gift_selections:
+                        self.bot.answer_callback_query(call.id, "⏰ *Сессия подарка истекла!*")
+                        return
+                    
+                    request_text = """*✨ О, да ты у нас щедрый!*
+_Ответь на сообщение числом коинов, сколько собрался дарить_"""
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    btn_cancel = types.InlineKeyboardButton("Отменить", callback_data="gift_cancel")
+                    markup.add(btn_cancel)
+                    
+                    self.bot.edit_message_text(
+                        request_text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                    self.waiting_for_coins[telegram_id_str] = True
+                    
+                elif call.data.startswith("gift_confirm_coins_"):
+                    coin_amount = int(call.data.split("_")[3])
+                    telegram_id_str = str(call.from_user.id)
+                    
+                    if telegram_id_str not in self.gift_selections:
+                        self.bot.answer_callback_query(call.id, "⏰ *Сессия подарка истекла!*")
+                        return
+                    
+                    gift_data = self.gift_selections[telegram_id_str]
+                    target_telegram_id = gift_data["target_telegram_id"]
+                    target_name = gift_data["target_name"]
+                    is_admin = gift_data["is_admin"]
+                    
+                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+                    if not user_data:
+                        self.bot.answer_callback_query(call.id, "❌ *Ошибка!*")
+                        return
+
+                    if not is_admin:
+                        if user_data.get('coins', 0) < coin_amount:
+                            self.bot.answer_callback_query(call.id, "❌ *Недостаточно коинов!*")
+                            return
+
+                        new_coins_sender = user_data.get('coins', 0) - coin_amount
+                        self.users_collection.update_one(
+                            {"telegram_id": telegram_id_str},
+                            {"$set": {"coins": new_coins_sender}}
+                        )
+                    
+                    target_user = self.users_collection.find_one({"telegram_id": target_telegram_id})
+                    if target_user:
+                        new_coins_receiver = target_user.get('coins', 0) + coin_amount
+                        self.users_collection.update_one(
+                            {"telegram_id": target_telegram_id},
+                            {"$set": {"coins": new_coins_receiver}}
+                        )
+                    
+                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
+                    
+                    sender_name = call.from_user.first_name or "Отправитель"
+                    sender_text = f"""*✨ Коины отправлены! 
+Надеюсь, {target_name} они пригодятся!*"""
+
+                    sent_message = self.bot.send_message(
+                        call.message.chat.id,
+                        sender_text,
+                        parse_mode='Markdown'
+                    )
+                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+
+                    receiver_text = f"""*💌 Тебе подарок!*
+{sender_name} подарил тебе {coin_amount} коинов!"""
+
+                    sent_message = self.bot.send_message(
+                        target_telegram_id,
+                        receiver_text,
+                        parse_mode='Markdown'
+                    )
+                    self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
+
+                    del self.gift_selections[telegram_id_str]
                     
                 elif call.data.startswith("gift_select_"):
                     chibi_name = call.data.replace("gift_select_", "")
@@ -2067,7 +1952,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "Сообщение устарело, открой его заново")
+                        self.bot.answer_callback_query(call.id, "⏰ *Сессия подарка истекла!*")
                         return
                     
                     gift_data = self.gift_selections[telegram_id_str]
@@ -2076,10 +1961,17 @@ _Ты проиграл, все честно. Ставку уже не верну
                     target_name = gift_data["target_name"]
                     is_admin = gift_data["is_admin"]
                     
-                    success = self.remove_chibi_from_user(call.from_user.id, chibi_name)
-                    if not success and not is_admin:
-                        self.bot.answer_callback_query(call.id, "🎒 Похоже, что у  тебя больше нет этого чибика!")
+                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+                    if not user_data or (chibi_name not in user_data.get('chibis', []) and not user_data.get('infinite_chibis')):
+                        self.bot.answer_callback_query(call.id, "🎒 *У тебя больше нет этого чибика!*")
                         return
+                    
+                    if not is_admin and not user_data.get('infinite_chibis'):
+                        new_chibis = [chibi for chibi in user_data.get('chibis', []) if chibi != chibi_name]
+                        self.users_collection.update_one(
+                            {"telegram_id": telegram_id_str},
+                            {"$set": {"chibis": new_chibis}}
+                        )
                     
                     target_user = self.users_collection.find_one({"telegram_id": target_telegram_id})
                     if target_user:
@@ -2169,26 +2061,28 @@ _Спасибо за участие!_"""
                     if telegram_id_str in self.gift_selections:
                         del self.gift_selections[telegram_id_str]
                     
+                    if telegram_id_str in self.waiting_for_coins:
+                        del self.waiting_for_coins[telegram_id_str]
+                    
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
                 elif call.data == "chibi_click":
                     self.bot.answer_callback_query(call.id)
                     
                 elif call.data == "item_click":
-                    self.bot.answer_callback_query(call.id, "🔒 Этот предмет нельзя использовать, друг!")
+                    self.bot.answer_callback_query(call.id, "🔒 *Этот предмет нельзя использовать!*")
                     
                 elif call.data == "empty":
-                    self.bot.answer_callback_query(call.id, "Пустовато тут!")
+                    self.bot.answer_callback_query(call.id, "📭 *Здесь пусто!*")
                     
                 else:
                     self.bot.answer_callback_query(call.id)
                     
             except Exception as e:
-                logger.error(f"Error in callback handler: {e}")
-                self.bot.answer_callback_query(call.id, "🙈 Не твое!", parse_mode='Markdown')
+                logger.error(f"Ошибка в callback: {e}")
+                self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
 
     def run(self):
-        """Запускает бота и веб-сервер"""
         logger.info("🤖 Чиби-бот запущен с MongoDB!")
         self.setup_handlers()
         
@@ -2207,18 +2101,13 @@ _Спасибо за участие!_"""
         self.bot.infinity_polling()
 
 def get_token():
-    """Получает токен бота из переменных окружения"""
-    token = os.getenv('BOT_TOKEN')
-    if not token:
-        logger.error("❌ Токен бота не найден!")
-        raise ValueError("BOT_TOKEN environment variable is required")
-    return token
+    return os.getenv('BOT_TOKEN')
 
 if __name__ == "__main__":
-    try:
-        token = get_token()
-        bot = ChibiBot(token)
-        bot.run()
-    except Exception as e:
-        logger.error(f"Failed to start bot: {e}")
+    token = get_token()
+    if not token:
+        print("❌ Токен не найден!")
         exit(1)
+    
+    bot = ChibiBot(token)
+    bot.run()
