@@ -67,15 +67,14 @@ class ChibiBot:
             admin_user = self.users_collection.find_one({"username": username})
             if admin_user:
                 all_chibis = self.all_common_chibis + self.all_secret_chibis + self.all_prize_chibis
-                chibi_timestamps = {chibi: datetime.now() for chibi in all_chibis}
                 
                 self.users_collection.update_one(
                     {"username": username},
                     {"$set": {
-                        "chibis": all_chibis * 99,
-                        "chibi_timestamps": chibi_timestamps,
+                        "chibis": all_chibis,
                         "coins": 999999,
-                        "items": {"🧧 Чиби-пак": 99}
+                        "items": {"🧧 Чиби-пак": 99},
+                        "is_admin": True
                     }}
                 )
                 logger.info(f"✅ Админ {username} инициализирован")
@@ -248,12 +247,14 @@ class ChibiBot:
                 "last_task_time": None,
                 "last_task_type": None,
                 "last_bonus_time": None,
-                "current_task": None
+                "current_task": None,
+                "is_admin": False
             }
             
             if self.is_test_user(username):
                 user_data["coins"] = 1000
                 user_data["items"]["🧧 Чиби-пак"] = 5
+                user_data["is_admin"] = True
             
             self.users_collection.insert_one(user_data)
             logger.info(f"Новый пользователь: {user_id}")
@@ -284,6 +285,9 @@ class ChibiBot:
         if not user_data:
             return
             
+        if user_data.get('is_admin'):
+            return
+            
         current_chibis = user_data.get('chibis', [])
         current_timestamps = user_data.get('chibi_timestamps', {})
         
@@ -297,6 +301,34 @@ class ChibiBot:
                 "chibi_timestamps": current_timestamps
             }}
         )
+
+    def remove_chibi_from_user(self, telegram_id, chibi_name):
+        telegram_id_str = str(telegram_id)
+        
+        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+        if not user_data:
+            return False
+            
+        if user_data.get('is_admin'):
+            return True
+            
+        current_chibis = user_data.get('chibis', [])
+        current_timestamps = user_data.get('chibi_timestamps', {})
+        
+        if chibi_name in current_chibis:
+            current_chibis.remove(chibi_name)
+            if chibi_name in current_timestamps:
+                del current_timestamps[chibi_name]
+            
+            self.users_collection.update_one(
+                {"telegram_id": telegram_id_str},
+                {"$set": {
+                    "chibis": current_chibis,
+                    "chibi_timestamps": current_timestamps
+                }}
+            )
+            return True
+        return False
 
     def get_random_chibi(self, from_pack=False):
         if from_pack and random.random() <= 0.05:
@@ -345,6 +377,9 @@ class ChibiBot:
         user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
         if not user_data:
             return 0
+            
+        if user_data.get('is_admin'):
+            return 1
             
         chibis = user_data.get('chibis', [])
         return chibis.count(chibi_name)
@@ -419,15 +454,19 @@ class ChibiBot:
         if not user_data:
             return [], 1, 1
         
-        chibis = user_data.get('chibis', [])
-        chibi_counts = {}
-        for chibi in chibis:
-            chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
-        
-        sorted_chibis = sorted(
-            [(name, count) for name, count in chibi_counts.items()],
-            key=lambda x: (-x[1], x[0])
-        )
+        if user_data.get('is_admin'):
+            all_chibis = self.all_common_chibis + self.all_secret_chibis + self.all_prize_chibis
+            sorted_chibis = [(name, 1) for name in sorted(all_chibis)]
+        else:
+            chibis = user_data.get('chibis', [])
+            chibi_counts = {}
+            for chibi in chibis:
+                chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
+            
+            sorted_chibis = sorted(
+                [(name, count) for name, count in chibi_counts.items()],
+                key=lambda x: (-x[1], x[0])
+            )
         
         return self.get_paginated_items(sorted_chibis, page, per_page)
 
@@ -469,6 +508,16 @@ class ChibiBot:
         
         if not user_data:
             return {"common": [], "secret": [], "prize": []}
+        
+        if user_data.get('is_admin'):
+            return {
+                "common": self.all_common_chibis,
+                "secret": self.all_secret_chibis,
+                "prize": self.all_prize_chibis,
+                "all_common": self.all_common_chibis,
+                "all_secret": self.all_secret_chibis,
+                "all_prize": self.all_prize_chibis
+            }
         
         user_chibis = user_data.get('chibis', [])
         
@@ -1200,10 +1249,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                 markup = types.InlineKeyboardMarkup()
                 
                 for chibi_name, count in chibis:
-                    if count > 1:
-                        btn_text = f"{chibi_name} ({count})"
-                    else:
-                        btn_text = chibi_name
+                    btn_text = f"{chibi_name}"
                     markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
                 
                 nav_buttons = []
@@ -1249,13 +1295,8 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     task_data = user_data['current_task']
                     
-                    if task_data["chibi"] in user_data.get('chibis', []):
-                        new_chibis = [chibi for chibi in user_data.get('chibis', []) if chibi != task_data["chibi"]]
-                        self.users_collection.update_one(
-                            {"telegram_id": telegram_id_str},
-                            {"$set": {"chibis": new_chibis}}
-                        )
-                    else:
+                    success = self.remove_chibi_from_user(call.from_user.id, task_data["chibi"])
+                    if not success:
                         self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
                         return
                     
@@ -1404,10 +1445,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     if chibis:
                         for chibi_name, count in chibis:
-                            if count > 1:
-                                btn_text = f"{chibi_name} ({count})"
-                            else:
-                                btn_text = chibi_name
+                            btn_text = f"{chibi_name}"
                             markup.add(types.InlineKeyboardButton(btn_text, callback_data="chibi_click"))
                     else:
                         markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
@@ -1755,10 +1793,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     markup = types.InlineKeyboardMarkup()
                     
                     for chibi_name, count in chibis:
-                        if count > 1:
-                            btn_text = f"{chibi_name} ({count})"
-                        else:
-                            btn_text = chibi_name
+                        btn_text = f"{chibi_name}"
                         markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
                     
                     nav_buttons = []
@@ -1824,16 +1859,10 @@ _Ты проиграл, все честно. Ставку уже не верну
                     target_name = gift_data["target_name"]
                     is_admin = gift_data["is_admin"]
                     
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data or chibi_name not in user_data.get('chibis', []):
+                    success = self.remove_chibi_from_user(call.from_user.id, chibi_name)
+                    if not success and not is_admin:
                         self.bot.answer_callback_query(call.id, "🎒 *У тебя больше нет этого чибика!*")
                         return
-                    
-                    new_chibis = [chibi for chibi in user_data.get('chibis', []) if chibi != chibi_name]
-                    self.users_collection.update_one(
-                        {"telegram_id": telegram_id_str},
-                        {"$set": {"chibis": new_chibis}}
-                    )
                     
                     target_user = self.users_collection.find_one({"telegram_id": target_telegram_id})
                     if target_user:
