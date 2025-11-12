@@ -1796,7 +1796,7 @@ _•••••••••••••••_
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ *Сессия подарка истекла!*")
+                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
                     chibis, current_page, total_pages = self.get_user_chibis_for_gift(call.from_user.id, page)
@@ -1835,7 +1835,7 @@ _•••••••••••••••_
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ *Сессия подарка истекла!*")
+                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
                     request_text = """*✨ О, да ты у нас щедрый!*
@@ -1860,7 +1860,7 @@ _Ответь на сообщение числом коинов, сколько 
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ *Сессия подарка истекла!*")
+                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
                     gift_data = self.gift_selections[telegram_id_str]
@@ -1922,7 +1922,7 @@ _Ответь на сообщение числом коинов, сколько 
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ *Сессия подарка истекла!*")
+                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
                     self.gift_selections[telegram_id_str]["chibi_name"] = chibi_name
@@ -1952,7 +1952,7 @@ _Ответь на сообщение числом коинов, сколько 
                     telegram_id_str = str(call.from_user.id)
                     
                     if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ *Сессия подарка истекла!*")
+                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
                     gift_data = self.gift_selections[telegram_id_str]
@@ -1963,7 +1963,7 @@ _Ответь на сообщение числом коинов, сколько 
                     
                     user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
                     if not user_data or (chibi_name not in user_data.get('chibis', []) and not user_data.get('infinite_chibis')):
-                        self.bot.answer_callback_query(call.id, "🎒 *У тебя больше нет этого чибика!*")
+                        self.bot.answer_callback_query(call.id, "🎒 У тебя больше нет этого чибика! :(")
                         return
                     
                     if not is_admin and not user_data.get('infinite_chibis'):
@@ -2070,20 +2070,20 @@ _Спасибо за участие!_"""
                     self.bot.answer_callback_query(call.id)
                     
                 elif call.data == "item_click":
-                    self.bot.answer_callback_query(call.id, "🔒 *Этот предмет нельзя использовать!*")
+                    self.bot.answer_callback_query(call.id, "Это использовать нельзя")
                     
                 elif call.data == "empty":
-                    self.bot.answer_callback_query(call.id, "📭 *Здесь пусто!*")
+                    self.bot.answer_callback_query(call.id, "Пустовато здесь!")
                     
                 else:
                     self.bot.answer_callback_query(call.id)
                     
             except Exception as e:
                 logger.error(f"Ошибка в callback: {e}")
-                self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
+                self.bot.answer_callback_query(call.id, "Не твое!", parse_mode='Markdown')
 
     def run(self):
-        logger.info("🤖 Чиби-бот запущен с MongoDB!")
+        logger.info("ОНО ЖИВОЕ!")
         self.setup_handlers()
         
         if "RENDER" in os.environ:
