@@ -17,7 +17,7 @@ class MongoDB:
         try:
             self.client = MongoClient(self.uri)
             self.db = self.client[self.db_name]
-            # Проверяем соединение
+            
             self.client.admin.command('ping')
             logger.info("✅ Успешное подключение к MongoDB")
         except Exception as e:
@@ -31,10 +31,9 @@ class MongoDB:
         if self.client:
             self.client.close()
 
-# Создаем глобальный экземпляр
+# НЕ СМЕЙ ТРОГАТЬ! УБЬЮ НАХЕР
 db = MongoDB()
 
-# Коллекции
 def get_users_collection():
     return db.get_collection('users')
 
