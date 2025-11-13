@@ -1,2121 +1,1578 @@
-import telebot
-from telebot import types
-import random
-import string
-import os
-import logging
-import threading
-import time
-import math
-from flask import Flask, request, jsonify
-from datetime import datetime, timedelta
-from pymongo import MongoClient
-from bson import ObjectId
-from flask_cors import CORS
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Chibeki Bot</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        /* СТИЛИ СЛАЙД-ШОУ */
+        .onboarding-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+            padding: 20px;
+            box-sizing: border-box;
+            color: white;
+            opacity: 1;
+            transition: opacity 0.4s ease;
+        }
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+        .onboarding-progress-bars {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 40px;
+        }
 
-class ChibiBot:
-    def __init__(self, token):
-        self.bot = telebot.TeleBot(token)
+        .onboarding-progress-bar-container {
+            flex: 1;
+            height: 3px;
+            background-color: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .onboarding-progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background-color: white;
+            border-radius: 2px;
+            transition: width 10s linear;
+        }
+
+        .onboarding-slide-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            position: relative;
+        }
+
+        .onboarding-slide {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            width: 100%;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+
+        .onboarding-slide.active {
+            display: flex;
+            opacity: 1;
+        }
+
+        .onboarding-slide-gif {
+            width: 200px;
+            height: 200px;
+            margin-bottom: 30px;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.6s ease, transform 0.6s ease;
+        }
+
+        .onboarding-slide.active .onboarding-slide-gif {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .onboarding-slide-title {
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            opacity: 0;
+            transform: translateY(15px);
+            transition: opacity 0.6s ease 0.2s, transform 0.6s ease 0.2s;
+        }
+
+        .onboarding-slide.active .onboarding-slide-title {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .onboarding-slide-description {
+            font-size: 15px;
+            opacity: 0.9;
+            line-height: 1.5;
+            max-width: 320px;
+            margin-bottom: 20px;
+            opacity: 0;
+            transform: translateY(15px);
+            transition: opacity 0.6s ease 0.4s, transform 0.6s ease 0.4s;
+        }
+
+        .onboarding-slide.active .onboarding-slide-description {
+            opacity: 0.9;
+            transform: translateY(0);
+        }
+
+        .onboarding-click-area {
+            position: absolute;
+            top: 0;
+            width: 50%;
+            height: 100%;
+            z-index: 5;
+        }
+
+        .onboarding-click-area.left {
+            left: 0;
+        }
+
+        .onboarding-click-area.right {
+            right: 0;
+        }
+
+        .onboarding-tg-button-area {
+            position: absolute;
+            bottom: 30px;
+            left: 0;
+            right: 0;
+            padding: 0 20px;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.6s ease 0.6s, transform 0.6s ease 0.6s;
+        }
+
+        .onboarding-slide.active .onboarding-tg-button-area {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* СТИЛИ ОСНОВНОГО ПРИЛОЖЕНИЯ */
+        * {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
         
-        self.test_users = ['tmkazavr', 'ya_admin7']
+        body {
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            font-family: 'Montserrat', sans-serif;
+            background-color: #000;
+        }
+
+        .loading-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 50;
+            opacity: 1;
+            transition: opacity 0.5s ease;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #FFD951;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            padding-top: 105px;
+            box-sizing: border-box;
+            overflow-y: auto;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        .screen.active {
+            opacity: 1;
+        }
+
+        .screen::-webkit-scrollbar {
+            display: none;
+        }
+
+        .screen {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: fixed;
+            top: 15px;
+            left: 20px;
+            right: 20px;
+            z-index: 6;
+            opacity: 0;
+            transform: translateY(-10px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+
+        .screen.active .header-container {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .main-logo {
+            width: 120px;
+            height: auto;
+            opacity: 0;
+            transform: translateX(-10px);
+            transition: opacity 0.5s ease 0.1s, transform 0.5s ease 0.1s;
+        }
+
+        .screen.active .main-logo {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .user-avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 17px;
+            background-color: #333;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 12px;
+            opacity: 0;
+            transform: translateX(10px);
+            transition: opacity 0.5s ease 0.2s, transform 0.5s ease 0.2s;
+        }
+
+        .screen.active .user-avatar {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .segmented-control {
+            display: flex;
+            background-color: transparent;
+            border: 2px solid #333;
+            border-radius: 16px;
+            padding: 3px;
+            margin-bottom: 25px;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.5s ease 0.3s, transform 0.5s ease 0.3s;
+        }
+
+        .screen.active .segmented-control {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .segment {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 15px;
+            color: rgba(255, 255, 255, 0.7);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .segment.active {
+            color: white;
+            background-color: #333;
+        }
+
+        .content-section {
+            display: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .content-section.active {
+            display: block;
+            opacity: 1;
+        }
+
+        .item-card {
+            background-color: #1a1a1a;
+            border-radius: 21px;
+            padding: 14px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            width: 100%;
+            box-sizing: border-box;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            min-height: 60px;
+            opacity: 0;
+            transform: translateY(10px);
+        }
+
+        .content-section.active .item-card {
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.4s ease, transform 0.4s ease, background-color 0.2s ease;
+        }
+
+        .content-section.active .item-card:nth-child(1) {
+            transition-delay: 0.1s;
+        }
+
+        .content-section.active .item-card:nth-child(2) {
+            transition-delay: 0.2s;
+        }
+
+        .content-section.active .item-card:nth-child(3) {
+            transition-delay: 0.3s;
+        }
+
+        .item-card:active {
+            background-color: #2a2a2a;
+            transform: scale(0.98);
+        }
+
+        .item-image {
+            width: 45px;
+            height: 45px;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-right: 14px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #2a2a2a;
+            flex-shrink: 0;
+            transition: transform 0.3s ease;
+        }
+
+        .item-card:active .item-image {
+            transform: scale(0.95);
+        }
+
+        .item-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: opacity 0.3s ease;
+        }
+
+        .item-image img.loading {
+            opacity: 0;
+        }
+
+        .item-image img.loaded {
+            opacity: 1;
+        }
+
+        .lock-icon {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 20px;
+        }
+
+        .item-content {
+            flex: 1;
+        }
+
+        .item-title {
+            font-weight: 600;
+            font-size: 16px;
+            color: #fff;
+            margin-bottom: 2px;
+        }
+
+        .item-subtitle {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.7);
+            line-height: 1.3;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            position: fixed;
+            top: 15px;
+            left: 20px;
+            right: 20px;
+            z-index: 7;
+        }
+
+        .header-title {
+            color: white;
+            font-size: 18px;
+            font-weight: 600;
+            text-align: center;
+            opacity: 0;
+            transform: translateY(-10px);
+            transition: opacity 0.5s ease, transform 0.5s ease;
+        }
+
+        .collection-screen.active .header-title {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .progress-info-button {
+            width: 30px;
+            height: 30px;
+            border-radius: 17px;
+            background-color: #333;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-left: 12px;
+            transition: background-color 0.2s ease;
+            opacity: 0;
+            transform: scale(0.8);
+            transition: opacity 0.5s ease 0.2s, transform 0.5s ease 0.2s, background-color 0.2s ease;
+        }
+
+        .collection-screen.active .progress-info-button {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .progress-info-button:active {
+            background-color: #444;
+        }
+
+        .chibi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-top: 10px;
+            padding-bottom: 20px;
+        }
+
+        .chibi-card {
+            background-color: #1a1a1a;
+            border-radius: 16px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            aspect-ratio: 1;
+            position: relative;
+            transition: transform 0.3s ease, opacity 0.4s ease;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            opacity: 0;
+            transform: scale(0.9);
+        }
+
+        .collection-screen.active .chibi-card {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        .chibi-card:nth-child(1) { transition-delay: 0.05s; }
+        .chibi-card:nth-child(2) { transition-delay: 0.1s; }
+        .chibi-card:nth-child(3) { transition-delay: 0.15s; }
+        .chibi-card:nth-child(4) { transition-delay: 0.2s; }
+        .chibi-card:nth-child(5) { transition-delay: 0.25s; }
+        .chibi-card:nth-child(6) { transition-delay: 0.3s; }
+        .chibi-card:nth-child(7) { transition-delay: 0.35s; }
+        .chibi-card:nth-child(8) { transition-delay: 0.4s; }
+        .chibi-card:nth-child(9) { transition-delay: 0.45s; }
+        .chibi-card:nth-child(10) { transition-delay: 0.5s; }
+        .chibi-card:nth-child(11) { transition-delay: 0.55s; }
+        .chibi-card:nth-child(12) { transition-delay: 0.6s; }
+
+        .chibi-card:active {
+            transform: scale(0.95);
+        }
+
+        .chibi-image {
+            width: 100%;
+            height: 70%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .chibi-image img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            transition: opacity 0.3s ease;
+        }
+
+        .chibi-image img.loading {
+            opacity: 0;
+        }
+
+        .chibi-image img.loaded {
+            opacity: 1;
+        }
+
+        .chibi-name {
+            color: white;
+            font-size: 11px;
+            text-align: center;
+            font-weight: 500;
+            line-height: 1.2;
+        }
+
+        .locked-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 16px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .lock-icon-small {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 16px;
+            margin-bottom: 4px;
+        }
+
+        .locked-text {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 9px;
+            text-align: center;
+        }
+
+        .unknown-chibi {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #1a1a1a;
+            border-radius: 16px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .unknown-icon {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 20px;
+            margin-bottom: 6px;
+        }
+
+        .unknown-text {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 10px;
+            text-align: center;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            z-index: 100;
+            display: none;
+            justify-content: center;
+            align-items: flex-end;
+            padding: 20px;
+            box-sizing: border-box;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .modal-content {
+            background-color: #1a1a1a;
+            border-radius: 21px;
+            padding: 25px;
+            width: 100%;
+            max-width: 400px;
+            transform: translateY(20px);
+            transition: transform 0.3s ease;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+            opacity: 1;
+        }
+
+        .modal-overlay.active .modal-content {
+            transform: translateY(0);
+        }
+
+        .modal-title {
+            color: white;
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .modal-description {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+            text-align: center;
+            margin-bottom: 25px;
+            line-height: 1.4;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 30px;
+            background-color: #333;
+            border-radius: 15px;
+            overflow: visible;
+            margin-bottom: 25px;
+            position: relative;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            border-radius: 15px;
+            background: linear-gradient(90deg, #FFD951, #FFE580);
+            transition: width 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+        }
+
+        .progress-bar-text {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            white-space: nowrap;
+            transition: left 0.8s cubic-bezier(0.22, 0.61, 0.36, 1);
+            left: 10px;
+        }
+
+        .error-message {
+            text-align: center;
+            color: white;
+            margin-top: 50px;
+            font-size: 18px;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
         
-        if "RENDER" in os.environ:
-            self.app = Flask(__name__)
-            CORS(self.app)
+        .error-message.active {
+            opacity: 1;
+        }
         
-        self.mongo_uri = os.getenv('MONGODB_URI')
-        if not self.mongo_uri:
-            logger.error("MONGODB_URI не найден!")
-            raise ValueError("MONGODB_URI не найден")
+        .collection-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000000;
+            display: flex;
+            flex-direction: column;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+            z-index: 8;
+            padding: 20px;
+            padding-top: 105px;
+            box-sizing: border-box;
+            overflow-y: auto;
+        }
+
+        .collection-screen.active {
+            opacity: 1;
+        }
+
+        .image-placeholder {
+            width: 100%;
+            height: 100%;
+            background-color: #2a2a2a;
+            border-radius: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Слайд-шоу -->
+    <div class="onboarding-screen" id="onboardingScreen">
+        <div class="onboarding-progress-bars">
+            <div class="onboarding-progress-bar-container">
+                <div class="onboarding-progress-bar-fill" id="onboardingProgressBar1"></div>
+            </div>
+            <div class="onboarding-progress-bar-container">
+                <div class="onboarding-progress-bar-fill" id="onboardingProgressBar2"></div>
+            </div>
+            <div class="onboarding-progress-bar-container">
+                <div class="onboarding-progress-bar-fill" id="onboardingProgressBar3"></div>
+            </div>
+        </div>
         
-        try:
-            self.client = MongoClient(self.mongo_uri)
-            self.db = self.client.chibibot
-            self.users_collection = self.db.users
-            logger.info("✅ Успешное подключение к MongoDB")
-        except Exception as e:
-            logger.error(f"❌ Ошибка подключения к MongoDB: {e}")
-            raise
+        <div class="onboarding-slide-content">
+            <div class="onboarding-click-area left" id="onboardingLeftArea"></div>
+            <div class="onboarding-click-area right" id="onboardingRightArea"></div>
+            
+            <div class="onboarding-slide active" id="onboardingSlide1">
+                <img src="https://media.tenor.com/xrqG4GhZxZcAAAAi/utya-telegram.gif" alt="Добро пожаловать" class="onboarding-slide-gif">
+                <div class="onboarding-slide-title">Добро пожаловать!</div>
+                <div class="onboarding-slide-description">Это приложение разработано специально для более удобного использования бота! Здесь тебя ждут все нужные статьи, гайды, и даже можно смотреть своих чибиков, прикинь? Советую не медлить, гуд лак!</div>
+            </div>
+            
+            <div class="onboarding-slide" id="onboardingSlide2">
+                <img src="https://media.tenor.com/LO1LW4khBigAAAAi/utya-utya-duck.gif" alt="Любишь чибиков?" class="onboarding-slide-gif">
+                <div class="onboarding-slide-title">Любишь чибиков?</div>
+                <div class="onboarding-slide-description">Держу пари что да, иначе бы ты сейчас здесь не находился! Если у тебя есть предложения для развития бота или идеи для новых чибиков, мы всегда рады! Ты можешь связаться с нами, и тебе по-быстрому ответят! Если есть вопросы, идеи или еще что-то, мы всегда открыты к диалогу! Ждем тебя у нас, и спасибо что играешь в ЧИБИКОВ!</div>
+                <div class="onboarding-tg-button-area" id="onboardingContactButtonArea"></div>
+            </div>
+            
+            <div class="onboarding-slide" id="onboardingSlide3">
+                <img src="https://media.tenor.com/tTbGahmBaxkAAAAi/utya.gif" alt="У нас есть канал!" class="onboarding-slide-gif">
+                <div class="onboarding-slide-title">У нас есть канал!</div>
+                <div class="onboarding-slide-description">Кстати, у чибиков есть свой собственный телеграм-канал! Залетай быстрее и подписывайся, ведь там мы проводим розыгрыши на уникальные призы, общаемся с вами и делимся процессом создания чибиков! Спасибо за подписку, друг!</div>
+                <div class="onboarding-tg-button-area" id="onboardingChannelButtonArea"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Экран загрузки -->
+    <div class="loading-screen hidden" id="loadingScreen">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- Основное приложение -->
+    <div class="screen hidden" id="mainScreen">
+        <div class="header-container">
+            <img src="https://i.ibb.co/zTB331HR/image.png" alt="Логотип" class="main-logo">
+            <div class="user-avatar" id="userAvatar">TG</div>
+        </div>
         
-        self.all_common_chibis = self._scan_chibis_folder("chibis/common")
-        self.all_secret_chibis = self._scan_chibis_folder("chibis/secret")
-        self.all_prize_chibis = self._scan_chibis_folder("chibis/prize")
+        <div class="segmented-control">
+            <div class="segment active" data-section="chibis">Чибики</div>
+            <div class="segment" data-section="articles">Статьи</div>
+        </div>
         
-        self._init_collections()
-        self._init_admin_users()
+        <div class="content-section active" id="chibisSection">
+            <div class="item-card" id="commonChibisBtn">
+                <div class="item-image" id="commonChibiImageContainer">
+                    <div class="lock-icon"><i class="fas fa-lock"></i></div>
+                </div>
+                <div class="item-content">
+                    <div class="item-title">Обычные</div>
+                    <div class="item-subtitle">Твоя шедевральная коллекция обычных чибиков</div>
+                </div>
+            </div>
+            
+            <div class="item-card" id="secretChibisBtn" style="display: none;">
+                <div class="item-image">
+                    <img src="" alt="Секретные чибики" id="secretChibiImage" class="loading">
+                </div>
+                <div class="item-content">
+                    <div class="item-title" id="secretTitle">???</div>
+                    <div class="item-subtitle">Секретные чибики</div>
+                </div>
+            </div>
+            
+            <div class="item-card" id="prizeChibisBtn" style="display: none;">
+                <div class="item-image">
+                    <img src="" alt="Призовые чибики" id="prizeChibiImage" class="loading">
+                </div>
+                <div class="item-content">
+                    <div class="item-title">Призовые</div>
+                    <div class="item-subtitle">Эксклюзивные призовые чибики</div>
+                </div>
+            </div>
+        </div>
         
-        self.used_ids = set()
-        self.gift_selections = {}
-        self.message_owners = {}
-        self.waiting_for_coins = {}
+        <div class="content-section" id="articlesSection">
+            <div class="item-card" id="diceArticleBtn">
+                <div class="item-image">
+                    <img src="https://i.ibb.co/sJVz9tH3/IMG-6876.png" alt="Статья" class="loading">
+                </div>
+                <div class="item-content">
+                    <div class="item-title">Как работают кости?</div>
+                    <div class="item-subtitle">Все об азартной игре на коины</div>
+                </div>
+            </div>
+            
+            <div class="item-card" id="contactArticleBtn">
+                <div class="item-image">
+                    <img src="https://i.ibb.co/sJVz9tH3/IMG-6876.png" alt="Связь" class="loading">
+                </div>
+                <div class="item-content">
+                    <div class="item-title">Как связаться с админами?</div>
+                    <div class="item-subtitle">Обратная связь с чиловыми админами 🤘</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Экран коллекции обычных чибиков -->
+    <div class="collection-screen hidden" id="commonCollectionScreen">
+        <div class="header">
+            <div class="header-title">Обычные чибики</div>
+            <div class="progress-info-button" id="progressInfoButton">?</div>
+        </div>
         
-    def _scan_chibis_folder(self, folder_path):
-        if not os.path.exists(folder_path):
-            logger.warning(f"Папка {folder_path} не найдена!")
-            return []
+        <div class="chibi-grid" id="commonChibiGrid"></div>
+        <div class="error-message hidden" id="errorMessage">
+            Ошибка
+            <div id="errorButtonArea"></div>
+        </div>
+    </div>
+
+    <!-- Экран коллекции секретных чибиков -->
+    <div class="collection-screen hidden" id="secretCollectionScreen">
+        <div class="header">
+            <div class="header-title">Секретные чибики</div>
+        </div>
         
-        chibi_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-        chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
-        return sorted(chibi_names)
-    
-    def _init_admin_users(self):
-        for username in self.test_users:
-            admin_user = self.users_collection.find_one({"username": username})
-            if admin_user:
-                all_chibis = self.all_common_chibis + self.all_secret_chibis + self.all_prize_chibis
-                chibi_timestamps = {chibi: datetime.now() for chibi in all_chibis}
+        <div class="chibi-grid" id="secretChibiGrid"></div>
+    </div>
+
+    <!-- Экран коллекции призовых чибиков -->
+    <div class="collection-screen hidden" id="prizeCollectionScreen">
+        <div class="header">
+            <div class="header-title">Призовые чибики</div>
+        </div>
+        
+        <div class="chibi-grid" id="prizeChibiGrid"></div>
+    </div>
+
+    <!-- Модальное окно прогресса -->
+    <div class="modal-overlay" id="progressModal">
+        <div class="modal-content">
+            <div class="modal-title">Твой прогресс</div>
+            <div class="modal-description">Это — твой прогресс коллекции! Он показывает, сколько чибиков у тебя уже есть от общего числа</div>
+            
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill" id="modalProgressBar"></div>
+                <div class="progress-bar-text" id="modalProgressText">0%</div>
+            </div>
+            
+            <div id="telegramButtonArea"></div>
+        </div>
+    </div>
+
+    <script>
+        // Константы
+        const BOT_API_URL = 'https://chibi-bot-3d4x.onrender.com';
+        // Добавляем версию для предотвращения кэширования изображений
+        const IMAGE_VERSION = 'v1.2';
+        
+        // Элементы слайд-шоу
+        const onboardingElements = {
+            screen: document.getElementById('onboardingScreen'),
+            progressBar1: document.getElementById('onboardingProgressBar1'),
+            progressBar2: document.getElementById('onboardingProgressBar2'),
+            progressBar3: document.getElementById('onboardingProgressBar3'),
+            slide1: document.getElementById('onboardingSlide1'),
+            slide2: document.getElementById('onboardingSlide2'),
+            slide3: document.getElementById('onboardingSlide3'),
+            leftArea: document.getElementById('onboardingLeftArea'),
+            rightArea: document.getElementById('onboardingRightArea'),
+            contactButtonArea: document.getElementById('onboardingContactButtonArea'),
+            channelButtonArea: document.getElementById('onboardingChannelButtonArea')
+        };
+
+        // Элементы основного приложения
+        const appElements = {
+            loadingScreen: document.getElementById('loadingScreen'),
+            mainScreen: document.getElementById('mainScreen'),
+            userAvatar: document.getElementById('userAvatar'),
+            segments: document.querySelectorAll('.segment'),
+            contentSections: document.querySelectorAll('.content-section'),
+            commonChibisBtn: document.getElementById('commonChibisBtn'),
+            secretChibisBtn: document.getElementById('secretChibisBtn'),
+            prizeChibisBtn: document.getElementById('prizeChibisBtn'),
+            diceArticleBtn: document.getElementById('diceArticleBtn'),
+            contactArticleBtn: document.getElementById('contactArticleBtn'),
+            commonCollectionScreen: document.getElementById('commonCollectionScreen'),
+            secretCollectionScreen: document.getElementById('secretCollectionScreen'),
+            prizeCollectionScreen: document.getElementById('prizeCollectionScreen'),
+            commonChibiGrid: document.getElementById('commonChibiGrid'),
+            secretChibiGrid: document.getElementById('secretChibiGrid'),
+            prizeChibiGrid: document.getElementById('prizeChibiGrid'),
+            progressInfoButton: document.getElementById('progressInfoButton'),
+            progressModal: document.getElementById('progressModal'),
+            modalProgressBar: document.getElementById('modalProgressBar'),
+            modalProgressText: document.getElementById('modalProgressText'),
+            telegramButtonArea: document.getElementById('telegramButtonArea'),
+            commonChibiImageContainer: document.getElementById('commonChibiImageContainer'),
+            secretChibiImage: document.getElementById('secretChibiImage'),
+            prizeChibiImage: document.getElementById('prizeChibiImage'),
+            secretTitle: document.getElementById('secretTitle'),
+            errorMessage: document.getElementById('errorMessage'),
+            errorButtonArea: document.getElementById('errorButtonArea')
+        };
+
+        // Данные приложения
+        let userData = { collectedChibis: [], secretChibis: [], prizeChibis: [] };
+        let allCommonChibis = [];
+        let allSecretChibis = [];
+        let allPrizeChibis = [];
+        let loadError = false;
+
+        // Утилиты
+        const utils = {
+            vibrate() {
+                if (window.Telegram?.WebApp?.HapticFeedback) {
+                    Telegram.WebApp.HapticFeedback.impactOccurred('light');
+                }
+            },
+
+            isTelegram() {
+                return window.Telegram?.WebApp;
+            },
+
+            openLink(url) {
+                if (this.isTelegram()) {
+                    Telegram.WebApp.openLink(url);
+                } else {
+                    window.open(url, '_blank');
+                }
+            },
+
+            getRandomChibi(chibis) {
+                return chibis[Math.floor(Math.random() * chibis.length)];
+            },
+
+            isAdmin() {
+                if (this.isTelegram()) {
+                    const user = Telegram.WebApp.initDataUnsafe.user;
+                    return user && user.username === 'ya_admin7';
+                }
+                return false;
+            },
+
+            // Функция для загрузки изображений с обработкой ошибок и версией
+            loadImage(imgElement, url, onLoadCallback = null) {
+                // Добавляем параметр версии для предотвращения кэширования
+                const versionedUrl = `${url}?v=${IMAGE_VERSION}`;
                 
-                self.users_collection.update_one(
-                    {"username": username},
-                    {"$set": {
-                        "chibis": all_chibis,
-                        "chibi_timestamps": chibi_timestamps,
-                        "coins": 999999,
-                        "items": {"🧧 Чиби-пак": 99},
-                        "infinite_chibis": True
-                    }}
-                )
-                logger.info(f"✅ Админ {username} инициализирован")
-            
-    def _init_collections(self):
-        self.users_collection.create_index("telegram_id", unique=True)
-        self.users_collection.create_index("user_id", unique=True)
-            
-    def is_test_user(self, username):
-        return username in self.test_users if username else False
-        
-    def is_banned(self, user_id):
-        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-        if user_data and user_data.get('banned_until'):
-            if datetime.now() < user_data['banned_until']:
-                return True
-            else:
-                self.users_collection.update_one(
-                    {"telegram_id": str(user_id)},
-                    {"$unset": {"banned_until": ""}}
-                )
-        return False
-        
-    def clear_user_data(self, telegram_id_str):
-        self.users_collection.update_one(
-            {"telegram_id": telegram_id_str},
-            {"$set": {
-                "chibis": [],
-                "items": {"🧧 Чиби-пак": 1},
-                "coins": 0,
-                "chibi_timestamps": {},
-                "last_chibi_time": None,
-                "last_task_time": None,
-                "last_task_type": None,
-                "last_bonus_time": None,
-                "current_task": None,
-                "infinite_chibis": False
-            }}
-        )
-            
-    def ban_user(self, user_id, duration_days=7):
-        telegram_id_str = str(user_id)
-        ban_until = datetime.now() + timedelta(days=duration_days)
-        
-        self.users_collection.update_one(
-            {"telegram_id": telegram_id_str},
-            {"$set": {"banned_until": ban_until}}
-        )
-        
-    def unban_user(self, user_id):
-        telegram_id_str = str(user_id)
-        self.users_collection.update_one(
-            {"telegram_id": telegram_id_str},
-            {"$unset": {"banned_until": ""}}
-        )
-            
-    def get_ban_time_left(self, user_id):
-        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-        if user_data and user_data.get('banned_until'):
-            time_left = user_data['banned_until'] - datetime.now()
-            return max(1, time_left.days)
-        return 0
-        
-    def format_time(self, seconds):
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        return f"{hours}ч {minutes:02d}м"
-        
-    def check_chibi_cooldown(self, user_id):
-        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-        if not user_data:
-            return None
-            
-        if self.is_test_user(user_data.get('username')):
-            return None
-            
-        if user_data.get('last_chibi_time'):
-            last_time = user_data['last_chibi_time']
-            time_passed = (datetime.now() - last_time).total_seconds()
-            if time_passed < 3 * 3600:
-                return 3 * 3600 - time_passed
-        return None
-        
-    def check_task_cooldown(self, user_id):
-        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-        if not user_data:
-            return None
-            
-        if self.is_test_user(user_data.get('username')):
-            return None
-            
-        if user_data.get('last_task_time'):
-            last_time = user_data['last_task_time']
-            task_type = user_data.get('last_task_type', 'completed')
-            
-            time_passed = (datetime.now() - last_time).total_seconds()
-            
-            if task_type == 'completed':
-                cooldown = 4 * 3600
-            else:
-                cooldown = 5.5 * 3600
+                imgElement.classList.add('loading');
+                imgElement.classList.remove('loaded');
                 
-            if time_passed < cooldown:
-                return cooldown - time_passed
-        return None
-        
-    def check_bonus_cooldown(self, user_id):
-        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-        if not user_data:
-            return None
-            
-        if self.is_test_user(user_data.get('username')):
-            return None
-            
-        if user_data.get('last_bonus_time'):
-            now = datetime.now()
-            last_bonus = user_data['last_bonus_time']
-            
-            moscow_time = now + timedelta(hours=3)
-            last_bonus_moscow = last_bonus + timedelta(hours=3)
-            
-            if last_bonus_moscow.date() == moscow_time.date():
-                next_midnight = datetime(moscow_time.year, moscow_time.month, moscow_time.day) + timedelta(days=1)
-                time_left = next_midnight - moscow_time
-                return time_left.total_seconds()
-        return None
-        
-    def generate_unique_user_id(self):
-        attempts = 0
-        while attempts < 100:
-            letter = random.choice(string.ascii_uppercase)
-            numbers = ''.join(random.choices(string.digits, k=4))
-            position = random.randint(0, 1)
-            user_id = letter + numbers if position == 0 else numbers + letter
-            
-            existing = self.users_collection.find_one({"user_id": user_id})
-            if not existing and user_id not in self.used_ids:
-                self.used_ids.add(user_id)
-                return user_id
-            attempts += 1
-        return f"U{random.randint(10000, 99999)}"
-    
-    def get_or_create_user(self, telegram_id, first_name=None, username=None):
-        telegram_id_str = str(telegram_id)
-        
-        if self.is_banned(telegram_id):
-            return None, False
-            
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        
-        if user_data:
-            self.users_collection.update_one(
-                {"telegram_id": telegram_id_str},
-                {"$set": {"last_active": datetime.now()}}
-            )
-            return user_data, False
-        else:
-            user_id = self.generate_unique_user_id()
-            user_data = {
-                "telegram_id": telegram_id_str,
-                "user_id": user_id,
-                "first_name": first_name,
-                "username": username,
-                "registration_date": datetime.now(),
-                "last_active": datetime.now(),
-                "chibis": [],
-                "items": {"🧧 Чиби-пак": 1},
-                "coins": 0,
-                "chibi_timestamps": {},
-                "last_chibi_time": None,
-                "last_task_time": None,
-                "last_task_type": None,
-                "last_bonus_time": None,
-                "current_task": None,
-                "infinite_chibis": False
+                const tempImg = new Image();
+                tempImg.onload = () => {
+                    imgElement.src = versionedUrl;
+                    imgElement.classList.remove('loading');
+                    imgElement.classList.add('loaded');
+                    if (onLoadCallback) onLoadCallback();
+                };
+                
+                tempImg.onerror = () => {
+                    console.warn('Failed to load image:', versionedUrl);
+                    imgElement.classList.remove('loading');
+                    // Можно показать placeholder вместо изображения
+                };
+                
+                tempImg.src = versionedUrl;
+            },
+
+            // Функция для плавного отображения экрана
+            showScreen(screenElement, delay = 0) {
+                return new Promise(resolve => {
+                    setTimeout(() => {
+                        screenElement.classList.remove('hidden');
+                        setTimeout(() => {
+                            screenElement.classList.add('active');
+                            resolve();
+                        }, 50);
+                    }, delay);
+                });
+            },
+
+            // Функция для плавного скрытия экрана
+            hideScreen(screenElement, delay = 0) {
+                return new Promise(resolve => {
+                    setTimeout(() => {
+                        screenElement.classList.remove('active');
+                        setTimeout(() => {
+                            screenElement.classList.add('hidden');
+                            resolve();
+                        }, 400);
+                    }, delay);
+                });
             }
-            
-            if self.is_test_user(username):
-                user_data["coins"] = 1000
-                user_data["items"]["🧧 Чиби-пак"] = 5
-                user_data["infinite_chibis"] = True
-            
-            self.users_collection.insert_one(user_data)
-            logger.info(f"Новый пользователь: {user_id}")
-            return user_data, True
+        };
 
-    def check_user_started(self, user_id):
-        user_data = self.users_collection.find_one({"telegram_id": str(user_id)})
-        return user_data is not None
+        // Слайд-шоу
+        const onboarding = {
+            currentSlide: 1,
+            currentTimer: null,
 
-    def send_start_suggestion(self, chat_id, message_id=None):
-        text = "⭐️ *Советую сначала запустить бота*"
-        markup = types.InlineKeyboardMarkup()
-        btn_start = types.InlineKeyboardButton("Запуск", url=f"https://t.me/{self.bot.get_me().username}?start=start")
-        markup.add(btn_start)
-        
-        if message_id:
-            try:
-                self.bot.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode='Markdown')
-            except:
-                self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
-        else:
-            self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+            init() {
+                if (this.shouldShowOnboarding()) {
+                    utils.showScreen(onboardingElements.screen);
+                    this.showSlide(1);
+                } else {
+                    this.finishOnboarding();
+                }
 
-    def add_chibi_to_user(self, telegram_id, chibi_name, rarity="Common"):
-        telegram_id_str = str(telegram_id)
-        
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        if not user_data:
-            return
-            
-        if user_data.get('infinite_chibis'):
-            return
-            
-        current_chibis = user_data.get('chibis', [])
-        current_timestamps = user_data.get('chibi_timestamps', {})
-        
-        current_chibis.append(chibi_name)
-        current_timestamps[chibi_name] = datetime.now()
-        
-        self.users_collection.update_one(
-            {"telegram_id": telegram_id_str},
-            {"$set": {
-                "chibis": current_chibis,
-                "chibi_timestamps": current_timestamps
-            }}
-        )
+                onboardingElements.leftArea.addEventListener('click', () => this.previousSlide());
+                onboardingElements.rightArea.addEventListener('click', () => this.nextSlide());
+            },
 
-    def get_random_chibi(self, from_pack=False):
-        if from_pack and random.random() <= 0.05:
-            chibi_folder = "chibis/secret"
-        else:
-            chibi_folder = "chibis/common"
-        
-        if not os.path.exists(chibi_folder):
-            logger.error(f"Папка {chibi_folder} не найдена!")
-            return None, None, "Common"
-        
-        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-        
-        if not chibi_files:
-            logger.error(f"В папке {chibi_folder} нет изображений!")
-            return None, None, "Common"
-        
-        random_file = random.choice(chibi_files)
-        file_path = os.path.join(chibi_folder, random_file)
-        file_name = os.path.splitext(random_file)[0]
-        formatted_name = file_name.replace('_', ' ')
-        
-        rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
-        
-        return file_path, formatted_name, rarity
-
-    def get_prize_chibi(self, chibi_name):
-        chibi_folder = "chibis/prize"
-        
-        if not os.path.exists(chibi_folder):
-            logger.error(f"Папка {chibi_folder} не найдена!")
-            return None, None, "Prize"
-        
-        file_path = os.path.join(chibi_folder, f"{chibi_name}.png")
-        if not os.path.exists(file_path):
-            logger.error(f"Призовой чибик {chibi_name} не найден!")
-            return None, None, "Prize"
-        
-        return file_path, chibi_name, "Prize"
-
-    def get_all_common_chibis(self):
-        return self.all_common_chibis
-
-    def get_chibi_count(self, telegram_id, chibi_name):
-        telegram_id_str = str(telegram_id)
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        if not user_data:
-            return 0
-            
-        if user_data.get('infinite_chibis'):
-            return 1
-            
-        chibis = user_data.get('chibis', [])
-        return chibis.count(chibi_name)
-
-    def generate_task(self, telegram_id):
-        telegram_id_str = str(telegram_id)
-        
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        if not user_data:
-            return None
-            
-        if user_data.get('current_task') is not None:
-            return user_data['current_task']
-        
-        emojis = ['🐊', '🐸', '🤖', '⛄️', '🐲', '👽']
-        names = ['Грирт', 'Таррек', 'Грит', 'Тарр', 'Крилл', 'Гето', 'Дин', 'Боксо', 'Мерин', 'Хрило', 'Гомадо', 'Грож']
-        phrases = [
-            "Эй, ты! Принеси-ка мне {chibi}, я щедро тебя награжу!",
-            "Приветствую… Очень хочу заполучить {chibi}, если принесешь мне его, в долгу не останусь",
-            "Бурабура, лакуш'н, принеси мне {chibi}, я готов платить"
-        ]
-        
-        _, chibi_name, _ = self.get_random_chibi()
-        if chibi_name is None:
-            chibi_name = "редкого чибика"
-        
-        reward = random.randint(32, 49)
-        emoji = random.choice(emojis)
-        name = random.choice(names)
-        phrase = random.choice(phrases).format(chibi=chibi_name)
-        
-        task_data = {
-            "chibi": chibi_name,
-            "reward": reward,
-            "emoji": emoji,
-            "name": name,
-            "phrase": phrase
-        }
-        
-        self.users_collection.update_one(
-            {"telegram_id": telegram_id_str},
-            {"$set": {"current_task": task_data}}
-        )
-        
-        return task_data
-
-    def get_task_text(self, task_data, telegram_id):
-        telegram_id_str = str(telegram_id)
-        has_chibi = self.get_chibi_count(telegram_id, task_data["chibi"]) > 0
-        button_text = "✅ Сдать задание (1/1)" if has_chibi else "Сдать задание (0/1)"
-        
-        task_text = f"""*{task_data['emoji']} {task_data['name']}*
-{task_data['phrase']}
-•••••••••••••••••••
-Дам *💰 {task_data['reward']}* за {task_data['chibi']}"""
-        
-        return task_text, button_text, has_chibi
-
-    def get_paginated_items(self, items_list, page=1, per_page=8):
-        total_pages = max(1, (len(items_list) + per_page - 1) // per_page)
-        page = max(1, min(page, total_pages))
-        
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        page_items = items_list[start_idx:end_idx]
-        
-        return page_items, page, total_pages
-
-    def get_user_chibis_paginated(self, telegram_id, page=1, per_page=8):
-        telegram_id_str = str(telegram_id)
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        if not user_data:
-            return [], 1, 1
-        
-        chibis = user_data.get('chibis', [])
-        chibi_counts = {}
-        for chibi in chibis:
-            chibi_counts[chibi] = chibi_counts.get(chibi, 0) + 1
-        
-        sorted_chibis = sorted(
-            [(name, count) for name, count in chibi_counts.items()],
-            key=lambda x: (-x[1], x[0])
-        )
-        
-        return self.get_paginated_items(sorted_chibis, page, per_page)
-
-    def get_user_items_paginated(self, telegram_id, page=1, per_page=8):
-        telegram_id_str = str(telegram_id)
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        if not user_data:
-            return [], 1, 1
-        
-        items = user_data.get('items', {})
-        active_items = {name: count for name, count in items.items() if count > 0}
-        
-        sorted_items = sorted(
-            [(name, count) for name, count in active_items.items()],
-            key=lambda x: (-x[1], x[0])
-        )
-        
-        return self.get_paginated_items(sorted_items, page, per_page)
-
-    def get_user_chibis_for_gift(self, telegram_id, page=1, per_page=6):
-        return self.get_user_chibis_paginated(telegram_id, page, per_page)
-
-    def check_message_ownership(self, call):
-        if call.message.chat.type == 'private':
-            return True
-            
-        telegram_id_str = str(call.from_user.id)
-        message_key = (call.message.chat.id, call.message.message_id)
-        
-        if message_key in self.message_owners:
-            if self.message_owners[message_key] != telegram_id_str:
-                self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
-                return False
-        return True
-
-    def get_user_collection_data(self, telegram_id):
-        telegram_id_str = str(telegram_id)
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        
-        if not user_data:
-            return {"common": [], "secret": [], "prize": []}
-        
-        user_chibis = user_data.get('chibis', [])
-        
-        common_collected = []
-        secret_collected = []
-        prize_collected = []
-        
-        for chibi in set(user_chibis):
-            if chibi in self.all_common_chibis:
-                common_collected.append(chibi)
-            elif chibi in self.all_secret_chibis:
-                secret_collected.append(chibi)
-            elif chibi in self.all_prize_chibis:
-                prize_collected.append(chibi)
-        
-        return {
-            "common": common_collected,
-            "secret": secret_collected,
-            "prize": prize_collected,
-            "all_common": self.all_common_chibis,
-            "all_secret": self.all_secret_chibis,
-            "all_prize": self.all_prize_chibis
-        }
-
-    def setup_flask_routes(self):
-        @self.app.route('/')
-        def home():
-            return "🤖 Чиби-бот работает с MongoDB и мини-приложением!"
-        
-        @self.app.route('/get_user_collection', methods=['POST'])
-        def get_user_collection():
-            try:
-                data = request.get_json()
-                telegram_id = data.get('telegram_id')
-                
-                if not telegram_id:
-                    return jsonify({"error": "Telegram ID required"}), 400
-                
-                collection_data = self.get_user_collection_data(telegram_id)
-                return jsonify(collection_data)
-                
-            except Exception as e:
-                logger.error(f"Ошибка получения коллекции: {e}")
-                return jsonify({"error": "Internal server error"}), 500
-        
-        @self.app.route('/get_all_chibis', methods=['GET'])
-        def get_all_chibis():
-            try:
-                return jsonify({
-                    "common": self.all_common_chibis,
-                    "secret": self.all_secret_chibis,
-                    "prize": self.all_prize_chibis
-                })
-            except Exception as e:
-                logger.error(f"Ошибка получения списка чибиков: {e}")
-                return jsonify({"error": "Internal server error"}), 500
-
-    def setup_handlers(self):
-        @self.bot.message_handler(commands=['start'])
-        def start_handler(message):
-            if message.chat.type != 'private':
-                return
-                
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    return
-                    
-                user_data, is_new_user = self.get_or_create_user(
-                    message.from_user.id,
-                    message.from_user.first_name,
-                    message.from_user.username
-                )
-                
-                if user_data is None:
-                    return
-                    
-                user_name = message.from_user.first_name or "путешественник"
-                
-                if is_new_user:
-                    sticker_id = "CAACAgIAAxkBAAE9JsNpAzQZv6b4b-KZ3ftL2Sld0kUjDQAC400AAkuWEEosjitzZk8fzDYE"
-                else:
-                    sticker_id = "CAACAgIAAxkBAAE9JstpAzTQNnpt9KcoUte9P7K3CiHpswACmEQAAk-mEEqVynQKXagSVjYE"
-                
-                self.bot.send_sticker(message.chat.id, sticker_id)
-                
-                if is_new_user:
-                    welcome_text = f"""✨ *Добро пожаловать, {user_name}!*
-
-Этот бот — коллекция уникальных чибиков! Собирай их, выполняй задания, обменивайся с друзьями и становись лучшим коллекционером!
-
-*Что можно делать:*
-• 🎁 Получать чибиков каждые 3 часа
-• 🎯 Выполнять задания за коины  
-• 🎰 Играть в кости
-• 🎏 Покупать чиби-паки в лавке
-• 💌 Дарить чибиков друзьям
-• 📦 Собирать коллекцию
-
-*Начни прямо сейчас!*"""
-                    markup = types.InlineKeyboardMarkup()
-                    btn_channel = types.InlineKeyboardButton('📢 Наш тгк', url='https://t.me/chibi_channel')
-                    markup.add(btn_channel)
-                    sent_message = self.bot.send_message(message.chat.id, welcome_text, reply_markup=markup, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    welcome_back = f"""✨ *С возвращением, {user_name}!*
-
-Рад снова тебя видеть! Продолжай собирать свою коллекцию чибиков!"""
-                    sent_message = self.bot.send_message(message.chat.id, welcome_back, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    
-            except Exception as e:
-                logger.error(f"Ошибка в start: {e}")
-                sent_message = self.bot.send_message(
-                    message.chat.id,
-                    "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
-                    parse_mode='Markdown'
-                )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-
-        @self.bot.message_handler(commands=['dice'])
-        def dice_handler(message):
-            if message.chat.type != 'private':
-                self.bot.reply_to(message, "🎲 *Игра доступна только в личке!*", parse_mode='Markdown')
-                return
-                
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    return
-                    
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-
-                parts = message.text.split()
-                if len(parts) < 2:
-                    error_text = """🎲 *Неправильный формат!*
-_Попробуй: /dice 100_"""
-                    sent_message = self.bot.send_message(message.chat.id, error_text, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    return
-
-                try:
-                    bet = int(parts[1])
-                except ValueError:
-                    error_text = """🎲 *Неправильный формат!*
-_Попробуй: /dice 100_"""
-                    sent_message = self.bot.send_message(message.chat.id, error_text, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    return
-
-                if bet < 1:
-                    self.bot.reply_to(message, "❌ *Ставка должна быть больше 0!*", parse_mode='Markdown')
-                    return
-
-                telegram_id_str = str(message.from_user.id)
-                user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                if not user_data:
-                    self.send_start_suggestion(message.chat.id)
-                    return
-
-                coins = user_data.get('coins', 0)
-                if coins < bet:
-                    self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {coins}💰", parse_mode='Markdown')
-                    return
-
-                new_coins = coins - bet
-                self.users_collection.update_one(
-                    {"telegram_id": telegram_id_str},
-                    {"$set": {"coins": new_coins}}
-                )
-
-                dice_message = self.bot.send_dice(message.chat.id, emoji='🎲')
-                dice_value = dice_message.dice.value
-
-                time.sleep(2)
-
-                if dice_value in [2, 4, 6]:
-                    win_amount = math.ceil(bet * 1.7)
-                    total_coins = new_coins + win_amount
-                    
-                    self.users_collection.update_one(
-                        {"telegram_id": telegram_id_str},
-                        {"$set": {"coins": total_coins}}
-                    )
-
-                    win_text = f"""*👽 Черт! {message.from_user.first_name}, тебя сегодня повезло… Забирай свой выигрыш!*
-_Поздравляю, ты обыграл дилера!_
-_•••••••••••••••_
-+ 💰*{win_amount}* коинов"""
-
-                    self.bot.send_message(message.chat.id, win_text, parse_mode='Markdown')
-                else:
-                    lose_text = f"""*👽 Ха-ха! {message.from_user.first_name}, кажется ты слил!*
-_Ты проиграл, все честно. Ставку уже не вернуть_"""
-
-                    self.bot.send_message(message.chat.id, lose_text, parse_mode='Markdown')
-
-            except Exception as e:
-                logger.error(f"Ошибка в dice: {e}")
-                sent_message = self.bot.send_message(
-                    message.chat.id,
-                    "⛓️‍💥* Что-то пошло не так!*",
-                    parse_mode='Markdown'
-                )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-
-        @self.bot.message_handler(commands=['ban'])
-        def ban_handler(message):
-            try:
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                telegram_id_str = str(message.from_user.id)
-                user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                
-                if not self.is_test_user(user_data.get('username')):
-                    self.bot.reply_to(message, "❌ *Недостаточно прав!*", parse_mode='Markdown')
-                    return
-                    
-                if len(message.text.split()) < 2:
-                    self.bot.reply_to(message, "🤷‍♂️ *Использование:* `/ban @username`", parse_mode='Markdown')
-                    return
-                    
-                target = message.text.split()[1].strip()
-                
-                target_user = self.users_collection.find_one({
-                    "$or": [
-                        {"username": target.replace('@', '')},
-                        {"user_id": target}
-                    ]
-                })
-                
-                if not target_user:
-                    self.bot.reply_to(message, "👻 *Пользователь не найден!*", parse_mode='Markdown')
-                    return
-                    
-                self.ban_user(target_user['telegram_id'])
-                self.bot.reply_to(message, f"✅ *Пользователь забанен на 7 дней!*", parse_mode='Markdown')
-                
-            except Exception as e:
-                logger.error(f"Ошибка бана: {e}")
-                self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
-
-        @self.bot.message_handler(commands=['unban'])
-        def unban_handler(message):
-            try:
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                telegram_id_str = str(message.from_user.id)
-                user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                
-                if not self.is_test_user(user_data.get('username')):
-                    self.bot.reply_to(message, "❌ *Недостаточно прав!*", parse_mode='Markdown')
-                    return
-                    
-                if len(message.text.split()) < 2:
-                    self.bot.reply_to(message, "🤷‍♂️ *Использование:* `/unban @username`", parse_mode='Markdown')
-                    return
-                    
-                target = message.text.split()[1].strip()
-                
-                target_user = self.users_collection.find_one({
-                    "$or": [
-                        {"username": target.replace('@', '')},
-                        {"user_id": target}
-                    ]
-                })
-                        
-                if not target_user:
-                    self.bot.reply_to(message, "👻 *Пользователь не найден!*", parse_mode='Markdown')
-                    return
-                    
-                self.unban_user(target_user['telegram_id'])
-                self.bot.reply_to(message, f"✅ *Пользователь разбанен!*", parse_mode='Markdown')
-                
-            except Exception as e:
-                logger.error(f"Ошибка разбана: {e}")
-                self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
-
-        @self.bot.message_handler(commands=['myid'])
-        def myid_handler(message):
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(
-                            message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
-                    return
-                    
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                user_data, _ = self.get_or_create_user(message.from_user.id)
-                user_id = user_data['user_id']
-                
-                response_text = f"⭐️ Твой айди — `{user_id}`"
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, response_text, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, response_text, parse_mode='Markdown')
-                
-            except Exception as e:
-                logger.error(f"Ошибка: {e}")
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
-
-        @self.bot.message_handler(commands=['balance'])
-        def balance_handler(message):
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(
-                            message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
-                    return
-                    
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                telegram_id_str = str(message.from_user.id)
-                user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                coins = user_data.get('coins', 0) if user_data else 0
-                
-                balance_text = f"💰 У тебя — *{coins}* коинов!"
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(message.chat.id, balance_text, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, balance_text, parse_mode='Markdown')
-                
-            except Exception as e:
-                logger.error(f"Ошибка: {e}")
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
-
-        @self.bot.message_handler(commands=['mart'])
-        def mart_handler(message):
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(
-                            message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
-                    return
-                    
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                mart_text = """🎏 *Лавка джавы*
-Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!"""
-                
-                markup = types.InlineKeyboardMarkup()
-                btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
-                markup.add(btn_pack)
-                
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        mart_text,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    reply_msg = self.bot.reply_to(message, mart_text, reply_markup=markup, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, reply_msg.message_id)] = str(message.from_user.id)
-                
-            except Exception as e:
-                logger.error(f"Ошибка при открытии лавки: {e}")
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
-
-        @self.bot.message_handler(commands=['chibi'])
-        def chibi_handler(message):
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(
-                            message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
-                    return
-                    
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                cooldown = self.check_chibi_cooldown(message.from_user.id)
-                if cooldown:
-                    time_left = self.format_time(int(cooldown))
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(
-                            message.chat.id,
-                            f"⚡️ *Ты уже залутал чибика в последнее время!* Возвращайся за новеньким-готовеньким через *{time_left}*!",
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, f"⚡️ *Ты уже залутал чибика в последнее время!* Возвращайся за новеньким-готовеньким через *{time_left}*!", parse_mode='Markdown')
-                    return
-                    
-                telegram_id_str = str(message.from_user.id)
-                file_path, chibi_name, rarity = self.get_random_chibi(from_pack=False)
-                
-                if file_path is None:
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(message.chat.id, "🌀 *Чибики сейчас отдыхают!* Загляни позже", parse_mode='Markdown')
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, "🌀 *Чибики сейчас отдыхают!* Загляни позже", parse_mode='Markdown')
-                    return
-                
-                self.add_chibi_to_user(message.from_user.id, chibi_name)
-                chibi_count = self.get_chibi_count(message.from_user.id, chibi_name)
-                
-                self.users_collection.update_one(
-                    {"telegram_id": telegram_id_str},
-                    {"$set": {"last_chibi_time": datetime.now()}}
-                )
-                
-                rarity_emoji = "🔷" if rarity == "Common" else "🔶"
-                if rarity == "Prize":
-                    rarity_emoji = "♦️"
-                
-                chibi_text = f"""*Тебе выпал — {chibi_name}!*
-Надеюсь, он тебе понравился! 
-Приходи еще через *2ч 59м*
-•••••••••••••••••••
-Редкость: {rarity_emoji} {rarity}
-У тебя: {chibi_count}"""
-                
-                with open(file_path, 'rb') as photo:
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_photo(
-                            message.chat.id,
-                            photo,
-                            caption=chibi_text,
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        sent_message = self.bot.send_photo(
-                            message.chat.id,
-                            photo,
-                            caption=chibi_text,
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    
-                logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
-                    
-            except Exception as e:
-                logger.error(f"Ошибка при отправке чиби: {e}")
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
-
-        @self.bot.message_handler(commands=['task'])
-        def task_handler(message):
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(
-                            message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
-                    return
-                    
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                cooldown = self.check_task_cooldown(message.from_user.id)
-                if cooldown:
-                    time_left = self.format_time(int(cooldown))
-                    user_data = self.users_collection.find_one({"telegram_id": str(message.from_user.id)})
-                    task_type = user_data.get('last_task_type', 'completed') if user_data else 'completed'
-                    
-                    if task_type == 'completed':
-                        text = f"🎯 *Ты выполнил свой таск недавно. Думаю, стоит взять перерыв! Осталось подождать* *{time_left}*"
-                    else:
-                        text = f"🎯 *Ты пропустил свой таск, поэтому придется ждать дольше*. Приходи через *{time_left}*"
-                    
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(message.chat.id, text, parse_mode='Markdown')
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, text, parse_mode='Markdown')
-                    return
-                    
-                task_data = self.generate_task(message.from_user.id)
-                task_text, button_text, has_chibi = self.get_task_text(task_data, message.from_user.id)
-                
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                btn_complete = types.InlineKeyboardButton(
-                    button_text, 
-                    callback_data="task_complete" if has_chibi else "task_cannot_complete"
-                )
-                btn_skip = types.InlineKeyboardButton(
-                    "Пропустить", 
-                    callback_data="task_skip_confirm"
-                )
-                markup.add(btn_complete, btn_skip)
-                
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        task_text,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    reply_msg = self.bot.reply_to(message, task_text, reply_markup=markup, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, reply_msg.message_id)] = str(message.from_user.id)
-                
-            except Exception as e:
-                logger.error(f"Ошибка при генерации задания: {e}")
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
-
-        @self.bot.message_handler(commands=['menu'])
-        def menu_handler(message):
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_message(
-                            message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
-                    return
-                    
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                menu_text = """*✨ Меню* 
-Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались"""
-                
-                markup = types.InlineKeyboardMarkup(row_width=2)
-                btn_warehouse = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
-                btn_channel = types.InlineKeyboardButton("📢 Наш тгк", url='https://t.me/chibi_channel')
-                
-                bonus_cooldown = self.check_bonus_cooldown(message.from_user.id)
-                if bonus_cooldown:
-                    time_left = self.format_time(int(bonus_cooldown))
-                    btn_bonus = types.InlineKeyboardButton(f"🔒 Приходи через {time_left}", callback_data="bonus_cooldown")
-                else:
-                    btn_bonus = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
-                
-                markup.add(btn_warehouse, btn_channel)
-                markup.add(btn_bonus)
-                
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        menu_text,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    reply_msg = self.bot.reply_to(message, menu_text, reply_markup=markup, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, reply_msg.message_id)] = str(message.from_user.id)
-                
-            except Exception as e:
-                logger.error(f"Ошибка при открытии меню: {e}")
-                if message.chat.type == 'private':
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
-
-        @self.bot.message_handler(commands=['gift'])
-        def gift_handler(message):
-            if message.chat.type != 'private':
-                self.bot.reply_to(message, "🙅‍♂️ *Не-не, дружок!* Эта команда доступна только в *личке с ботом*", parse_mode='Markdown')
-                return
-                
-            try:
-                if self.is_banned(message.from_user.id):
-                    days_left = self.get_ban_time_left(message.from_user.id)
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    return
-                    
-                if not self.check_user_started(message.from_user.id):
-                    self.send_start_suggestion(message.chat.id)
-                    return
-                    
-                if len(message.text.split()) < 2:
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "🤷‍♂️ *Ты что-то не так ввел, друг!* Попробуй: `/gift 1234Е`",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    return
-                
-                target_user_id = message.text.split()[1].strip()
-                
-                target_user = self.users_collection.find_one({"user_id": target_user_id})
-                
-                if not target_user:
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "👻 *Такого друга еще нет!* Проверь ID и попробуй снова",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    return
-                
-                if str(message.from_user.id) in self.users_collection.find_one({"user_id": target_user_id}).get('telegram_id', ''):
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "🐲 *Не-не, самому себе подарки не дарим!* Попробуй найти друзей",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    return
-                
-                telegram_id_str = str(message.from_user.id)
-                self.gift_selections[telegram_id_str] = {
-                    "target_user_id": target_user_id,
-                    "target_telegram_id": target_user.get('telegram_id'),
-                    "target_name": target_user.get('first_name', 'пользователь'),
-                    "is_admin": self.is_test_user(message.from_user.username)
+            shouldShowOnboarding() {
+                // Для админа всегда показываем слайд-шоу
+                if (utils.isAdmin()) {
+                    return true;
                 }
                 
-                chibis, current_page, total_pages = self.get_user_chibis_for_gift(message.from_user.id, 1)
-                
-                if not chibis:
-                    sent_message = self.bot.send_message(
-                        message.chat.id,
-                        "🎁 *А дарить-то нечего!* Сначала собери коллекцию чибиков",
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    return
-                
-                gift_text = f"""✨ *О, да ты у нас щедрый!*
-Выбери, какого чибика подаришь"""
-                
-                markup = types.InlineKeyboardMarkup()
-                
-                for chibi_name, count in chibis:
-                    btn_text = f"{chibi_name}"
-                    markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
-                
-                markup.add(types.InlineKeyboardButton("💰 Подарить коины", callback_data="gift_coins"))
-                
-                nav_buttons = []
-                if total_pages > 1:
-                    nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
-                
-                nav_buttons.append(types.InlineKeyboardButton("❌ Отменить", callback_data="gift_cancel"))
-                
-                if total_pages > 1:
-                    nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"gift_page_{(current_page % total_pages) + 1}"))
-                
-                markup.row(*nav_buttons)
-                
-                sent_message = self.bot.send_message(
-                    message.chat.id,
-                    gift_text,
-                    reply_markup=markup,
-                    parse_mode='Markdown'
-                )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                
-            except Exception as e:
-                logger.error(f"Ошибка при отправке подарка: {e}")
-                sent_message = self.bot.send_message(
-                    message.chat.id,
-                    "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
-                    parse_mode='Markdown'
-                )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                // Для остальных пользователей проверяем, видели ли они уже слайд-шоу
+                const hasSeenOnboarding = localStorage.getItem('hasSeenOnboarding');
+                return !hasSeenOnboarding;
+            },
 
-        @self.bot.message_handler(func=lambda message: True, content_types=['text'])
-        def handle_text_messages(message):
-            telegram_id_str = str(message.from_user.id)
+            saveLaunchTime() {
+                localStorage.setItem('lastLaunchTime', Date.now().toString());
+            },
+
+            markOnboardingAsSeen() {
+                // Сохраняем флаг, что пользователь видел слайд-шоу (кроме админа)
+                if (!utils.isAdmin()) {
+                    localStorage.setItem('hasSeenOnboarding', 'true');
+                }
+            },
+
+            clearCurrentTimer() {
+                if (this.currentTimer) {
+                    clearTimeout(this.currentTimer);
+                    this.currentTimer = null;
+                }
+            },
+
+            resetProgressBars() {
+                // Мгновенный сброс без анимации
+                onboardingElements.progressBar1.style.transition = 'none';
+                onboardingElements.progressBar2.style.transition = 'none';
+                onboardingElements.progressBar3.style.transition = 'none';
+                
+                onboardingElements.progressBar1.style.width = '0%';
+                onboardingElements.progressBar2.style.width = '0%';
+                onboardingElements.progressBar3.style.width = '0%';
+                
+                // Принудительная перерисовка
+                void onboardingElements.progressBar1.offsetWidth;
+                void onboardingElements.progressBar2.offsetWidth;
+                void onboardingElements.progressBar3.offsetWidth;
+                
+                // Возвращаем анимацию
+                onboardingElements.progressBar1.style.transition = '';
+                onboardingElements.progressBar2.style.transition = '';
+                onboardingElements.progressBar3.style.transition = '';
+            },
+
+            showSlide(slideNumber) {
+                utils.vibrate();
+                this.clearCurrentTimer();
+                this.resetProgressBars();
+
+                // Скрываем все слайды
+                onboardingElements.slide1.classList.remove('active');
+                onboardingElements.slide2.classList.remove('active');
+                onboardingElements.slide3.classList.remove('active');
+
+                // Убираем кнопки Telegram
+                this.removeTelegramButtons();
+
+                // Показываем нужный слайд и запускаем только его прогресс-бар
+                if (slideNumber === 1) {
+                    onboardingElements.slide1.classList.add('active');
+                    this.currentSlide = 1;
+                    onboardingElements.progressBar1.style.width = '100%';
+                    this.currentTimer = setTimeout(() => this.showSlide(2), 10000);
+                } else if (slideNumber === 2) {
+                    onboardingElements.slide2.classList.add('active');
+                    this.currentSlide = 2;
+                    onboardingElements.progressBar2.style.width = '100%';
+                    this.createTelegramButton(onboardingElements.contactButtonArea, 'Написать нам', 'https://t.me/request_chibeki_bot');
+                    this.currentTimer = setTimeout(() => this.showSlide(3), 10000);
+                } else if (slideNumber === 3) {
+                    onboardingElements.slide3.classList.add('active');
+                    this.currentSlide = 3;
+                    onboardingElements.progressBar3.style.width = '100%';
+                    this.createTelegramButton(onboardingElements.channelButtonArea, 'Перейти', 'https://t.me/chibeki_official');
+                    this.currentTimer = setTimeout(() => this.finishOnboarding(), 10000);
+                }
+            },
+
+            createTelegramButton(container, text, url) {
+                if (utils.isTelegram()) {
+                    const button = Telegram.WebApp.MainButton;
+                    button.setText(text);
+                    button.show();
+                    button.setParams({
+                        color: '#FFD951',
+                        text_color: '#000000'
+                    });
+
+                    const clickHandler = function() {
+                        utils.openLink(url);
+                    };
+
+                    button.onClick(clickHandler);
+                    container._clickHandler = clickHandler;
+                }
+            },
+
+            removeTelegramButtons() {
+                if (utils.isTelegram()) {
+                    Telegram.WebApp.MainButton.hide();
+                    Telegram.WebApp.MainButton.offClick(onboardingElements.contactButtonArea._clickHandler);
+                    Telegram.WebApp.MainButton.offClick(onboardingElements.channelButtonArea._clickHandler);
+                }
+            },
+
+            previousSlide() {
+                if (this.currentSlide === 1) {
+                    this.showSlide(1);
+                } else {
+                    this.showSlide(this.currentSlide - 1);
+                }
+            },
+
+            nextSlide() {
+                if (this.currentSlide === 3) {
+                    this.finishOnboarding();
+                } else {
+                    this.showSlide(this.currentSlide + 1);
+                }
+            },
+
+            async finishOnboarding() {
+                this.removeTelegramButtons();
+                this.markOnboardingAsSeen();
+                this.saveLaunchTime();
+                await utils.hideScreen(onboardingElements.screen);
+                app.showLoadingScreen();
+                app.loadUserCollection();
+            }
+        };
+
+        // Основное приложение
+        const app = {
+            initTelegramWebApp() {
+                if (utils.isTelegram()) {
+                    Telegram.WebApp.ready();
+                    Telegram.WebApp.expand();
+
+                    const user = Telegram.WebApp.initDataUnsafe.user;
+                    if (user) {
+                        if (user.photo_url) {
+                            appElements.userAvatar.innerHTML = `<img src="${user.photo_url}" style="width:100%;height:100%;object-fit:cover;border-radius:17px;">`;
+                        }
+
+                        Telegram.WebApp.setHeaderColor('#000000');
+                        Telegram.WebApp.setBackgroundColor('#000000');
+                        Telegram.WebApp.BackButton.onClick(() => this.handleBackButton());
+                    }
+                }
+            },
+
+            async showLoadingScreen() {
+                await utils.showScreen(appElements.loadingScreen);
+            },
+
+            async hideLoadingScreen() {
+                await utils.hideScreen(appElements.loadingScreen);
+            },
+
+            async showMainScreen() {
+                appElements.commonCollectionScreen.classList.remove('active');
+                appElements.secretCollectionScreen.classList.remove('active');
+                appElements.prizeCollectionScreen.classList.remove('active');
+                
+                await utils.hideScreen(appElements.commonCollectionScreen);
+                await utils.hideScreen(appElements.secretCollectionScreen);
+                await utils.hideScreen(appElements.prizeCollectionScreen);
+                
+                await utils.showScreen(appElements.mainScreen);
+                if (utils.isTelegram()) Telegram.WebApp.BackButton.hide();
+            },
+
+            async showCollectionScreen(screen) {
+                utils.vibrate();
+                await utils.hideScreen(appElements.mainScreen);
+                await utils.showScreen(screen);
+                
+                if (utils.isTelegram()) Telegram.WebApp.BackButton.show();
+                
+                if (screen === appElements.commonCollectionScreen) {
+                    if (loadError) {
+                        this.showErrorScreen();
+                    } else {
+                        this.loadCommonCollection();
+                    }
+                } else if (screen === appElements.secretCollectionScreen) {
+                    this.loadSecretCollection();
+                } else if (screen === appElements.prizeCollectionScreen) {
+                    this.loadPrizeCollection();
+                }
+            },
+
+            handleBackButton() {
+                utils.vibrate();
+                if (appElements.commonCollectionScreen.classList.contains('active') || 
+                    appElements.secretCollectionScreen.classList.contains('active') ||
+                    appElements.prizeCollectionScreen.classList.contains('active')) {
+                    this.showMainScreen();
+                }
+            },
+
+            showErrorScreen() {
+                appElements.commonChibiGrid.classList.add('hidden');
+                appElements.errorMessage.classList.add('active');
+                this.showErrorButton();
+            },
+
+            async loadUserCollection() {
+                try {
+                    if (utils.isTelegram()) {
+                        const user = Telegram.WebApp.initDataUnsafe.user;
+                        if (user) {
+                            // Загружаем все чибики
+                            const chibisResponse = await fetch(`${BOT_API_URL}/get_all_chibis`);
+                            if (chibisResponse.ok) {
+                                const chibisData = await chibisResponse.json();
+                                allCommonChibis = chibisData.common || [];
+                                allSecretChibis = chibisData.secret || [];
+                                allPrizeChibis = chibisData.prize || [];
+                            }
+
+                            // Загружаем коллекцию пользователя
+                            const response = await fetch(`${BOT_API_URL}/get_user_collection`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ telegram_id: user.id })
+                            });
+
+                            if (response.ok) {
+                                const collection = await response.json();
+                                userData.collectedChibis = collection.common || [];
+                                userData.secretChibis = collection.secret || [];
+                                userData.prizeChibis = collection.prize || [];
+                                loadError = false;
+                            } else {
+                                throw new Error('Ошибка сервера');
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('Ошибка загрузки коллекции:', error);
+                    loadError = true;
+                    allCommonChibis = [];
+                    userData.collectedChibis = [];
+                }
+
+                this.updateMainScreenImages();
+                await this.hideLoadingScreen();
+                await this.showMainScreen();
+            },
+
+            updateMainScreenImages() {
+                // Обычные чибики
+                if (userData.collectedChibis.length > 0) {
+                    const randomChibi = utils.getRandomChibi(userData.collectedChibis);
+                    const imageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/common/${randomChibi.replace(/ /g, '_')}.png`;
+                    
+                    // Создаем изображение и загружаем его с помощью нашей утилиты
+                    const img = document.createElement('img');
+                    img.alt = "Обычные чибики";
+                    utils.loadImage(img, imageUrl, () => {
+                        appElements.commonChibiImageContainer.innerHTML = '';
+                        appElements.commonChibiImageContainer.appendChild(img);
+                    });
+                }
+
+                // Секретные чибики
+                if (userData.secretChibis.length > 0) {
+                    appElements.secretChibisBtn.style.display = 'flex';
+                    const randomChibi = utils.getRandomChibi(userData.secretChibis);
+                    const imageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/secret/${randomChibi.replace(/ /g, '_')}.png`;
+                    utils.loadImage(appElements.secretChibiImage, imageUrl);
+                    appElements.secretTitle.textContent = 'Секретные';
+                }
+
+                // Призовые чибики
+                if (userData.prizeChibis.length > 0) {
+                    appElements.prizeChibisBtn.style.display = 'flex';
+                    const randomChibi = utils.getRandomChibi(userData.prizeChibis);
+                    const imageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/prize/${randomChibi.replace(/ /g, '_')}.png`;
+                    utils.loadImage(appElements.prizeChibiImage, imageUrl);
+                }
+
+                // Загружаем изображения для статей
+                const articleImages = document.querySelectorAll('#articlesSection .item-image img');
+                articleImages.forEach(img => {
+                    if (img.src && !img.classList.contains('loaded')) {
+                        utils.loadImage(img, img.src);
+                    }
+                });
+            },
+
+            calculateCollectionPercentage() {
+                if (allCommonChibis.length === 0) return 0;
+                const percentage = Math.round((userData.collectedChibis.length / allCommonChibis.length) * 100);
+                return Math.min(percentage, 100);
+            },
+
+            createChibiCard(chibiName, isCollected, rarity) {
+                const card = document.createElement('div');
+                card.className = 'chibi-card';
+
+                if (rarity === 'secret' && !isCollected) {
+                    card.innerHTML = `
+                        <div class="unknown-chibi">
+                            <div class="unknown-icon"><i class="fas fa-question"></i></div>
+                            <div class="unknown-text">???</div>
+                        </div>
+                    `;
+                } else {
+                    const imageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/${rarity}/${chibiName.replace(/ /g, '_')}.png`;
+                    card.innerHTML = `
+                        <div class="chibi-image">
+                            <img src="" alt="${chibiName}" class="loading">
+                        </div>
+                        <div class="chibi-name">${chibiName}</div>
+                        ${!isCollected ? `
+                            <div class="locked-overlay">
+                                <div class="lock-icon-small"><i class="fas fa-lock"></i></div>
+                                <div class="locked-text">Не получен</div>
+                            </div>
+                        ` : ''}
+                    `;
+                    
+                    // Загружаем изображение с помощью нашей утилиты
+                    const img = card.querySelector('img');
+                    if (img) {
+                        utils.loadImage(img, imageUrl);
+                    }
+                }
+
+                card.addEventListener('click', utils.vibrate);
+                return card;
+            },
+
+            loadCommonCollection() {
+                appElements.commonChibiGrid.innerHTML = '';
+                appElements.commonChibiGrid.classList.remove('hidden');
+                appElements.errorMessage.classList.remove('active');
+
+                [...allCommonChibis].sort().forEach(chibiName => {
+                    const isCollected = userData.collectedChibis.includes(chibiName);
+                    appElements.commonChibiGrid.appendChild(this.createChibiCard(chibiName, isCollected, 'common'));
+                });
+            },
+
+            loadSecretCollection() {
+                appElements.secretChibiGrid.innerHTML = '';
+
+                [...allSecretChibis].sort().forEach(chibiName => {
+                    const isCollected = userData.secretChibis.includes(chibiName);
+                    appElements.secretChibiGrid.appendChild(this.createChibiCard(chibiName, isCollected, 'secret'));
+                });
+            },
+
+            loadPrizeCollection() {
+                appElements.prizeChibiGrid.innerHTML = '';
+
+                [...allPrizeChibis].sort().forEach(chibiName => {
+                    const isCollected = userData.prizeChibis.includes(chibiName);
+                    appElements.prizeChibiGrid.appendChild(this.createChibiCard(chibiName, isCollected, 'prize'));
+                });
+            }
+        };
+
+        // Кнопки ошибки
+        const errorButton = {
+            show() {
+                if (utils.isTelegram()) {
+                    const button = Telegram.WebApp.MainButton;
+                    button.setText("Сообщить админу");
+                    button.show();
+                    button.setParams({ color: '#FFD951', text_color: '#000000' });
+                    button.onClick(() => {
+                        utils.openLink('https://t.me/request_chibeki_bot');
+                    });
+                    appElements.errorButtonArea._clickHandler = () => utils.openLink('https://t.me/request_chibeki_bot');
+                }
+            },
+
+            hide() {
+                if (utils.isTelegram()) {
+                    Telegram.WebApp.MainButton.hide();
+                    Telegram.WebApp.MainButton.offClick(appElements.errorButtonArea._clickHandler);
+                }
+            }
+        };
+
+        // Модальное окно прогресса
+        const progressModal = {
+            show() {
+                utils.vibrate();
+                const percentage = app.calculateCollectionPercentage();
+                
+                appElements.modalProgressBar.style.width = '0%';
+                appElements.modalProgressText.textContent = '0%';
+                appElements.modalProgressText.style.left = '10px';
+                
+                this.createTelegramButton();
+                utils.showScreen(appElements.progressModal);
+                
+                setTimeout(() => this.animateProgressBar(percentage), 100);
+            },
+
+            hide() {
+                utils.hideScreen(appElements.progressModal);
+                this.removeTelegramButton();
+                if (loadError && appElements.commonCollectionScreen.classList.contains('active')) {
+                    errorButton.show();
+                }
+            },
+
+            animateProgressBar(targetPercentage) {
+                let currentPercentage = 0;
+                const duration = 800;
+                const startTime = Date.now();
+                const containerWidth = appElements.modalProgressBar.parentElement.offsetWidth;
+                
+                const update = () => {
+                    const elapsed = Date.now() - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+                    
+                    // Плавная анимация с easing
+                    currentPercentage = Math.floor(targetPercentage * progress);
+                    
+                    appElements.modalProgressBar.style.width = currentPercentage + '%';
+                    appElements.modalProgressText.textContent = currentPercentage + '%';
+                    
+                    // Позиционирование текста - сдвигаем левее
+                    const progressWidth = (currentPercentage / 100) * containerWidth;
+                    const textPosition = Math.max(10, Math.min(progressWidth - 25, containerWidth - 40));
+                    appElements.modalProgressText.style.left = textPosition + 'px';
+                    
+                    if (progress < 1) {
+                        requestAnimationFrame(update);
+                    }
+                };
+                
+                update();
+            },
+
+            createTelegramButton() {
+                if (utils.isTelegram()) {
+                    errorButton.hide();
+                    const button = Telegram.WebApp.MainButton;
+                    button.setText('Понятно');
+                    button.show();
+                    button.setParams({ color: '#FFD951', text_color: '#000000' });
+                    button.onClick(() => this.hide());
+                    appElements.telegramButtonArea._clickHandler = () => this.hide();
+                }
+            },
+
+            removeTelegramButton() {
+                if (utils.isTelegram()) {
+                    Telegram.WebApp.MainButton.hide();
+                    Telegram.WebApp.MainButton.offClick(appElements.telegramButtonArea._clickHandler);
+                }
+            }
+        };
+
+        // Инициализация событий
+        function initEvents() {
+            // Сегментированный контроль
+            appElements.segments.forEach(segment => {
+                segment.addEventListener('click', function() {
+                    utils.vibrate();
+                    appElements.segments.forEach(s => s.classList.remove('active'));
+                    this.classList.add('active');
+                    appElements.contentSections.forEach(s => s.classList.remove('active'));
+                    document.getElementById(this.dataset.section + 'Section').classList.add('active');
+                });
+            });
+
+            // Обработчики карточек
+            appElements.commonChibisBtn.addEventListener('click', () => app.showCollectionScreen(appElements.commonCollectionScreen));
+            appElements.secretChibisBtn.addEventListener('click', () => app.showCollectionScreen(appElements.secretCollectionScreen));
+            appElements.prizeChibisBtn.addEventListener('click', () => app.showCollectionScreen(appElements.prizeCollectionScreen));
             
-            if telegram_id_str in self.waiting_for_coins:
-                try:
-                    coin_amount = int(message.text)
-                    
-                    if coin_amount < 1:
-                        self.bot.reply_to(message, "❌ *Число должно быть положительным!*", parse_mode='Markdown')
-                        return
-                        
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data:
-                        return
-                        
-                    if not self.is_test_user(user_data.get('username')):
-                        if user_data.get('coins', 0) < coin_amount:
-                            self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {user_data.get('coins', 0)}💰", parse_mode='Markdown')
-                            return
-                    
-                    gift_data = self.gift_selections.get(telegram_id_str, {})
-                    target_name = gift_data.get("target_name", "пользователь")
-                    
-                    confirm_text = f"""*✨ Дарим {coin_amount} коинов?*
-_Ты уверен, что хочешь этого? Назад вернуть уже не получится_
-_•••••••••••••••_
-Кому: *{target_name}* 
-Сколько: *{coin_amount}*"""
+            appElements.diceArticleBtn.addEventListener('click', () => {
+                utils.vibrate();
+                utils.openLink('https://telegra.ph/Kak-rabotayut-kosti--CHIBIKI-11-10');
+            });
+            appElements.contactArticleBtn.addEventListener('click', () => {
+                utils.vibrate();
+                utils.openLink('https://telegra.ph/Kak-svyazatsya-s-adminami-11-11');
+            });
+            appElements.progressInfoButton.addEventListener('click', () => progressModal.show());
+            appElements.progressModal.addEventListener('click', (e) => {
+                if (e.target === appElements.progressModal) progressModal.hide();
+            });
+        }
 
-                    markup = types.InlineKeyboardMarkup()
-                    btn_confirm = types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"gift_confirm_coins_{coin_amount}")
-                    btn_cancel = types.InlineKeyboardButton("❌ Отмена", callback_data="gift_cancel")
-                    markup.add(btn_confirm, btn_cancel)
-                    
-                    self.bot.reply_to(message, confirm_text, reply_markup=markup, parse_mode='Markdown')
-                    del self.waiting_for_coins[telegram_id_str]
-                    
-                except ValueError:
-                    self.bot.reply_to(message, "❌ *Введи число!*", parse_mode='Markdown')
-
-        @self.bot.callback_query_handler(func=lambda call: True)
-        def callback_handler(call):
-            try:
-                if not self.check_message_ownership(call):
-                    return
-
-                if call.data == "task_complete":
-                    telegram_id_str = str(call.from_user.id)
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data or not user_data.get('current_task'):
-                        self.bot.answer_callback_query(call.id, "🎯 Задание уже выполнено!")
-                        return
-                    
-                    task_data = user_data['current_task']
-                    
-                    if task_data["chibi"] in user_data.get('chibis', []) or user_data.get('infinite_chibis'):
-                        if not user_data.get('infinite_chibis'):
-                            new_chibis = [chibi for chibi in user_data.get('chibis', []) if chibi != task_data["chibi"]]
-                            self.users_collection.update_one(
-                                {"telegram_id": telegram_id_str},
-                                {"$set": {"chibis": new_chibis}}
-                            )
-                    else:
-                        self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
-                        return
-                    
-                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
-                    
-                    sticker_id = "CAACAgIAAxkBAAE9Js9pAzTWs9gLLtl9Gqz_9V_4sbwXqgAC7EYAAjNREEqhVSL_nxyHZTYE"
-                    self.bot.send_sticker(call.message.chat.id, sticker_id)
-                    
-                    reward = task_data["reward"]
-                    new_coins = user_data.get('coins', 0) + reward
-                    self.users_collection.update_one(
-                        {"telegram_id": telegram_id_str},
-                        {"$set": {
-                            "coins": new_coins,
-                            "current_task": None,
-                            "last_task_time": datetime.now(),
-                            "last_task_type": 'completed'
-                        }}
-                    )
-                    
-                    user_nick = call.from_user.first_name or "путешественник"
-                    complete_text = f"""*Ес! {user_nick}, ты выполнил таск!*
-За это ты получаешь обещанную награду. Даже не буду гадать, сколько ты выбивал нужного чибика
-•••••••••••••••••••
-+ 💰*{reward}* коинов"""
-                    
-                    sent_message = self.bot.send_message(
-                        call.message.chat.id,
-                        complete_text,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-                    
-                elif call.data == "task_cannot_complete":
-                    self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
-                    
-                elif call.data == "task_skip":
-                    telegram_id_str = str(call.from_user.id)
-                    self.users_collection.update_one(
-                        {"telegram_id": telegram_id_str},
-                        {"$set": {
-                            "current_task": None,
-                            "last_task_time": datetime.now(),
-                            "last_task_type": 'skipped'
-                        }}
-                    )
-                    
-                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
-                    
-                    skip_text = """✨*Ты пропустил таск. Жди новый!*
-Осталось 5ч 29м"""
-                    
-                    sent_message = self.bot.send_message(
-                        call.message.chat.id,
-                        skip_text,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-                    
-                elif call.data == "task_skip_confirm":
-                    telegram_id_str = str(call.from_user.id)
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data or not user_data.get('current_task'):
-                        self.bot.answer_callback_query(call.id, "🎯 Нет активного задания!")
-                        return
-                    
-                    task_data = user_data['current_task']
-                    
-                    skip_text = f"""{task_data['emoji']}* Ты точно хочешь пропустить задание?*
-Придется долго ждать следующее, но пропуск бесплатный"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    btn_skip = types.InlineKeyboardButton("Пропустить", callback_data="task_skip")
-                    btn_back = types.InlineKeyboardButton("Назад", callback_data="task_back")
-                    markup.add(btn_skip, btn_back)
-                    
-                    self.bot.edit_message_text(
-                        skip_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "task_back":
-                    telegram_id_str = str(call.from_user.id)
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data or not user_data.get('current_task'):
-                        self.bot.answer_callback_query(call.id, "🎯 Нет активного задания!")
-                        return
-                    
-                    task_data = user_data['current_task']
-                    task_text, button_text, has_chibi = self.get_task_text(task_data, call.from_user.id)
-                    
-                    markup = types.InlineKeyboardMarkup(row_width=2)
-                    btn_complete = types.InlineKeyboardButton(
-                        button_text, 
-                        callback_data="task_complete" if has_chibi else "task_cannot_complete"
-                    )
-                    btn_skip = types.InlineKeyboardButton(
-                        "Пропустить", 
-                        callback_data="task_skip_confirm"
-                    )
-                    markup.add(btn_complete, btn_skip)
-                    
-                    self.bot.edit_message_text(
-                        task_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "menu_warehouse":
-                    warehouse_text = """*📦 Перепутье*
-Выбери, на какой раздел склада хочешь глянуть"""
-                    
-                    markup = types.InlineKeyboardMarkup(row_width=2)
-                    btn_chibis = types.InlineKeyboardButton("🧩 Чибики", callback_data="warehouse_chibis_1")
-                    btn_items = types.InlineKeyboardButton("🎒 Предметы", callback_data="warehouse_items_1")
-                    btn_back = types.InlineKeyboardButton("🔙 Назад", callback_data="menu_back")
-                    
-                    markup.add(btn_chibis, btn_items)
-                    markup.add(btn_back)
-                    
-                    self.bot.edit_message_text(
-                        warehouse_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data.startswith("warehouse_chibis_"):
-                    page = int(call.data.split("_")[2])
-                    chibis, current_page, total_pages = self.get_user_chibis_paginated(call.from_user.id, page)
-                    
-                    chibis_text = f"""📦 *Твои чибики*
-Великолепные и неповторимые. Ну, почти…
-Страница {current_page}/{total_pages}"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    
-                    if chibis:
-                        for chibi_name, count in chibis:
-                            if count > 1:
-                                btn_text = f"{chibi_name} ({count})"
-                            else:
-                                btn_text = chibi_name
-                            markup.add(types.InlineKeyboardButton(btn_text, callback_data="chibi_click"))
-                    else:
-                        markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
-                    
-                    nav_buttons = []
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_chibis_{((current_page-2) % total_pages) + 1}"))
-                    
-                    nav_buttons.append(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_warehouse"))
-                    
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"warehouse_chibis_{(current_page % total_pages) + 1}"))
-                    
-                    markup.row(*nav_buttons)
-                    
-                    self.bot.edit_message_text(
-                        chibis_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data.startswith("warehouse_items_"):
-                    page = int(call.data.split("_")[2])
-                    items, current_page, total_pages = self.get_user_items_paginated(call.from_user.id, page)
-                    
-                    items_text = f"""*📦 Твои предметы* 
-Тут хранятся твои боксы. Других предметов в боте пока и нет…
-Страница {current_page}/{total_pages}"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    
-                    if items:
-                        for item_name, count in items:
-                            if count > 1:
-                                btn_text = f"{item_name} ({count})"
-                            else:
-                                btn_text = item_name
-                            if item_name == "🧧 Чиби-пак":
-                                markup.add(types.InlineKeyboardButton(btn_text, callback_data="open_chibi_pack"))
-                            else:
-                                markup.add(types.InlineKeyboardButton(btn_text, callback_data="item_click"))
-                    else:
-                        markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
-                    
-                    nav_buttons = []
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_items_{((current_page-2) % total_pages) + 1}"))
-                    
-                    nav_buttons.append(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_warehouse"))
-                    
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"warehouse_items_{(current_page % total_pages) + 1}"))
-                    
-                    markup.row(*nav_buttons)
-                    
-                    self.bot.edit_message_text(
-                        items_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "open_chibi_pack":
-                    telegram_id_str = str(call.from_user.id)
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data:
-                        return
-                        
-                    pack_count = user_data.get('items', {}).get("🧧 Чиби-пак", 0)
-                    
-                    confirm_text = f"""*Ты точно хочешь открыть 🧧 Чиби-пак?*
-Хотя что тебе еще делать с ним? Разве что повесить на стену и любоваться"""
-                    
-                    markup = types.InlineKeyboardMarkup(row_width=2)
-                    
-                    if pack_count == 1:
-                        btn_open1 = types.InlineKeyboardButton("Открыть х1", callback_data="open_pack_1")
-                        markup.add(btn_open1)
-                    else:
-                        btn_open1 = types.InlineKeyboardButton("Открыть х1", callback_data="open_pack_1")
-                        btn_open_all = types.InlineKeyboardButton(f"Открыть х{pack_count}", callback_data=f"open_pack_{pack_count}")
-                        markup.add(btn_open1, btn_open_all)
-                    
-                    btn_back = types.InlineKeyboardButton("🔙 Назад", callback_data="warehouse_items_1")
-                    markup.add(btn_back)
-                    
-                    self.bot.edit_message_text(
-                        confirm_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data.startswith("open_pack_"):
-                    count = int(call.data.split("_")[2])
-                    telegram_id_str = str(call.from_user.id)
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data:
-                        return
-                    
-                    current_packs = user_data.get('items', {}).get("🧧 Чиби-пак", 0)
-                    if current_packs < count:
-                        self.bot.answer_callback_query(call.id, "🎒 *Недостаточно Чиби-паков!*")
-                        return
-                    
-                    new_packs = current_packs - count
-                    self.users_collection.update_one(
-                        {"telegram_id": telegram_id_str},
-                        {"$set": {"items.🧧 Чиби-пак": new_packs}}
-                    )
-                    
-                    for i in range(count):
-                        file_path, chibi_name, rarity = self.get_random_chibi(from_pack=True)
-                        
-                        if file_path is not None:
-                            self.add_chibi_to_user(call.from_user.id, chibi_name)
-                            chibi_count = self.get_chibi_count(call.from_user.id, chibi_name)
-                            
-                            rarity_emoji = "🔷" if rarity == "Common" else "🔶"
-                            if rarity == "Prize":
-                                rarity_emoji = "♦️"
-                            
-                            chibi_text = f"""*Тебе выпал — {chibi_name}!*
-Надеюсь, он тебе понравился!
-•••••••••••••••••••
-Редкость: {rarity_emoji} {rarity}
-У тебя: {chibi_count}"""
-                            
-                            with open(file_path, 'rb') as photo:
-                                sent_message = self.bot.send_photo(
-                                    call.message.chat.id,
-                                    photo,
-                                    caption=chibi_text,
-                                    parse_mode='Markdown'
-                                )
-                                self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-                    
-                    self.bot.answer_callback_query(call.id, f"🎉 Открыто {count} Чиби-пак(ов)!")
-                    
-                    items, current_page, total_pages = self.get_user_items_paginated(call.from_user.id, 1)
-                    
-                    items_text = f"""*📦 Твои предметы* 
-Тут хранятся твои боксы. Других предметов в боте пока и нет…
-Страница {current_page}/{total_pages}"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    
-                    if items:
-                        for item_name, count in items:
-                            if count > 1:
-                                btn_text = f"{item_name} ({count})"
-                            else:
-                                btn_text = item_name
-                            if item_name == "🧧 Чиби-пак":
-                                markup.add(types.InlineKeyboardButton(btn_text, callback_data="open_chibi_pack"))
-                            else:
-                                markup.add(types.InlineKeyboardButton(btn_text, callback_data="item_click"))
-                    else:
-                        markup.add(types.InlineKeyboardButton("Пусто", callback_data="empty"))
-                    
-                    nav_buttons = []
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_items_{((current_page-2) % total_pages) + 1}"))
-                    
-                    nav_buttons.append(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_warehouse"))
-                    
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"warehouse_items_{(current_page % total_pages) + 1}"))
-                    
-                    markup.row(*nav_buttons)
-                    
-                    self.bot.edit_message_text(
-                        items_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "mart_chibi_pack":
-                    pack_text = """🎏 *Хочешь купить этот прекрасный Чиби-пак?*
-Да брось, знаю что так руки и чешутся!"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    btn_buy = types.InlineKeyboardButton("Купить (120💰)", callback_data="buy_chibi_pack")
-                    btn_back = types.InlineKeyboardButton("🔙 Назад", callback_data="mart_back")
-                    markup.add(btn_buy)
-                    markup.add(btn_back)
-                    
-                    self.bot.edit_message_text(
-                        pack_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "buy_chibi_pack":
-                    telegram_id_str = str(call.from_user.id)
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data:
-                        return
-                    
-                    coins = user_data.get('coins', 0)
-                    
-                    if coins < 120:
-                        missing = 120 - coins
-                        self.bot.answer_callback_query(call.id, f"✨ Бро, сначала подкопи! Тебе не хватает {missing} коинов")
-                        return
-                    
-                    new_coins = coins - 120
-                    current_items = user_data.get('items', {})
-                    if "🧧 Чиби-пак" not in current_items:
-                        current_items["🧧 Чиби-пак"] = 0
-                    current_items["🧧 Чиби-пак"] += 1
-                    
-                    self.users_collection.update_one(
-                        {"telegram_id": telegram_id_str},
-                        {"$set": {
-                            "coins": new_coins,
-                            "items": current_items
-                        }}
-                    )
-                    
-                    self.bot.answer_callback_query(call.id, "🎉 Чиби-пак куплен!")
-                    
-                    mart_text = """🎏 *Лавка джавы*
-Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
-                    markup.add(btn_pack)
-                    
-                    self.bot.edit_message_text(
-                        mart_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "mart_back":
-                    mart_text = """🎏 *Лавка джавы*
-Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    btn_pack = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
-                    markup.add(btn_pack)
-                    
-                    self.bot.edit_message_text(
-                        mart_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "menu_bonus":
-                    telegram_id_str = str(call.from_user.id)
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data:
-                        return
-                    
-                    bonus_cooldown = self.check_bonus_cooldown(call.from_user.id)
-                    if bonus_cooldown and not self.is_test_user(user_data.get('username')):
-                        time_left = self.format_time(int(bonus_cooldown))
-                        self.bot.answer_callback_query(call.id, f"🔒 Бонус будет доступен через {time_left}")
-                        return
-                    
-                    bonus = random.randint(7, 19)
-                    
-                    new_coins = user_data.get('coins', 0) + bonus
-                    self.users_collection.update_one(
-                        {"telegram_id": telegram_id_str},
-                        {"$set": {
-                            "coins": new_coins,
-                            "last_bonus_time": datetime.now()
-                        }}
-                    )
-                    
-                    user_name = user_data.get('first_name', 'путешественник')
-                    bonus_text = f"""🎁 *Эй, {user_name}!*
-Ты только что получил ежедневный бонус! 
-•••••••••••••••••
-+ 💰*{bonus}* коинов"""
-                    
-                    sent_message = self.bot.send_message(
-                        call.message.chat.id,
-                        bonus_text,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-                    
-                elif call.data == "bonus_cooldown":
-                    telegram_id_str = str(call.from_user.id)
-                    bonus_cooldown = self.check_bonus_cooldown(call.from_user.id)
-                    if bonus_cooldown:
-                        time_left = self.format_time(int(bonus_cooldown))
-                        self.bot.answer_callback_query(call.id, f"🔒 Бонус будет доступен через {time_left}")
-                    
-                elif call.data == "menu_back":
-                    menu_text = """*✨ Меню* 
-Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались"""
-                    
-                    markup = types.InlineKeyboardMarkup(row_width=2)
-                    btn_warehouse = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
-                    btn_channel = types.InlineKeyboardButton("📢 Наш тгк", url='https://t.me/chibi_channel')
-                    
-                    bonus_cooldown = self.check_bonus_cooldown(call.from_user.id)
-                    user_data = self.users_collection.find_one({"telegram_id": str(call.from_user.id)})
-                    if bonus_cooldown and not self.is_test_user(user_data.get('username') if user_data else None):
-                        time_left = self.format_time(int(bonus_cooldown))
-                        btn_bonus = types.InlineKeyboardButton(f"🔒 Приходи через {time_left}", callback_data="bonus_cooldown")
-                    else:
-                        btn_bonus = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
-                    
-                    markup.add(btn_warehouse, btn_channel)
-                    markup.add(btn_bonus)
-                    
-                    self.bot.edit_message_text(
-                        menu_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data.startswith("gift_page_"):
-                    page = int(call.data.split("_")[2])
-                    telegram_id_str = str(call.from_user.id)
-                    
-                    if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
-                        return
-                    
-                    chibis, current_page, total_pages = self.get_user_chibis_for_gift(call.from_user.id, page)
-                    
-                    gift_text = f"""✨ *О, да ты у нас щедрый!*
-Выбери, какого чибика подаришь"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    
-                    for chibi_name, count in chibis:
-                        btn_text = f"{chibi_name}"
-                        markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"gift_select_{chibi_name}"))
-                    
-                    markup.add(types.InlineKeyboardButton("💰 Подарить коины", callback_data="gift_coins"))
-                    
-                    nav_buttons = []
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
-                    
-                    nav_buttons.append(types.InlineKeyboardButton("❌ Отменить", callback_data="gift_cancel"))
-                    
-                    if total_pages > 1:
-                        nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"gift_page_{(current_page % total_pages) + 1}"))
-                    
-                    markup.row(*nav_buttons)
-                    
-                    self.bot.edit_message_text(
-                        gift_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "gift_coins":
-                    telegram_id_str = str(call.from_user.id)
-                    
-                    if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
-                        return
-                    
-                    request_text = """*✨ О, да ты у нас щедрый!*
-_Ответь на сообщение числом коинов, сколько собрался дарить_"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    btn_cancel = types.InlineKeyboardButton("❌ Отменить", callback_data="gift_cancel")
-                    markup.add(btn_cancel)
-                    
-                    self.bot.edit_message_text(
-                        request_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                    self.waiting_for_coins[telegram_id_str] = True
-                    
-                elif call.data.startswith("gift_confirm_coins_"):
-                    coin_amount = int(call.data.split("_")[3])
-                    telegram_id_str = str(call.from_user.id)
-                    
-                    if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
-                        return
-                    
-                    gift_data = self.gift_selections[telegram_id_str]
-                    target_telegram_id = gift_data["target_telegram_id"]
-                    target_name = gift_data["target_name"]
-                    is_admin = gift_data["is_admin"]
-                    
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data:
-                        self.bot.answer_callback_query(call.id, "❌ *Ошибка!*")
-                        return
-
-                    if not is_admin:
-                        if user_data.get('coins', 0) < coin_amount:
-                            self.bot.answer_callback_query(call.id, "❌ *Недостаточно коинов!*")
-                            return
-
-                        new_coins_sender = user_data.get('coins', 0) - coin_amount
-                        self.users_collection.update_one(
-                            {"telegram_id": telegram_id_str},
-                            {"$set": {"coins": new_coins_sender}}
-                        )
-                    
-                    target_user = self.users_collection.find_one({"telegram_id": target_telegram_id})
-                    if target_user:
-                        new_coins_receiver = target_user.get('coins', 0) + coin_amount
-                        self.users_collection.update_one(
-                            {"telegram_id": target_telegram_id},
-                            {"$set": {"coins": new_coins_receiver}}
-                        )
-                    
-                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
-                    
-                    sender_name = call.from_user.first_name or "Отправитель"
-                    sender_text = f"""*✨ Коины отправлены! 
-Надеюсь, {target_name} они пригодятся!*"""
-
-                    sent_message = self.bot.send_message(
-                        call.message.chat.id,
-                        sender_text,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-
-                    receiver_text = f"""*💌 Тебе подарок!*
-{sender_name} подарил тебе {coin_amount} коинов!"""
-
-                    sent_message = self.bot.send_message(
-                        target_telegram_id,
-                        receiver_text,
-                        parse_mode='Markdown'
-                    )
-                    self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
-
-                    del self.gift_selections[telegram_id_str]
-                    
-                elif call.data.startswith("gift_select_"):
-                    chibi_name = call.data.replace("gift_select_", "")
-                    telegram_id_str = str(call.from_user.id)
-                    
-                    if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
-                        return
-                    
-                    self.gift_selections[telegram_id_str]["chibi_name"] = chibi_name
-                    
-                    target_name = self.gift_selections[telegram_id_str]["target_name"]
-                    
-                    confirm_text = f"""✨ *Дарим чибика?*
-Ты уверен, что хочешь этого? Назад вернуть уже не получится
-•••••••••••••••
-Кому: *{target_name}*
-Кого: *{chibi_name}*"""
-                    
-                    markup = types.InlineKeyboardMarkup()
-                    btn_confirm = types.InlineKeyboardButton("✅ Подтвердить", callback_data="gift_confirm")
-                    btn_cancel = types.InlineKeyboardButton("❌ Отмена", callback_data="gift_cancel")
-                    markup.add(btn_confirm, btn_cancel)
-                    
-                    self.bot.edit_message_text(
-                        confirm_text,
-                        call.message.chat.id,
-                        call.message.message_id,
-                        reply_markup=markup,
-                        parse_mode='Markdown'
-                    )
-                    
-                elif call.data == "gift_confirm":
-                    telegram_id_str = str(call.from_user.id)
-                    
-                    if telegram_id_str not in self.gift_selections:
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
-                        return
-                    
-                    gift_data = self.gift_selections[telegram_id_str]
-                    chibi_name = gift_data["chibi_name"]
-                    target_telegram_id = gift_data["target_telegram_id"]
-                    target_name = gift_data["target_name"]
-                    is_admin = gift_data["is_admin"]
-                    
-                    user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-                    if not user_data or (chibi_name not in user_data.get('chibis', []) and not user_data.get('infinite_chibis')):
-                        self.bot.answer_callback_query(call.id, "🎒 У тебя больше нет этого чибика! :(")
-                        return
-                    
-                    if not is_admin and not user_data.get('infinite_chibis'):
-                        new_chibis = [chibi for chibi in user_data.get('chibis', []) if chibi != chibi_name]
-                        self.users_collection.update_one(
-                            {"telegram_id": telegram_id_str},
-                            {"$set": {"chibis": new_chibis}}
-                        )
-                    
-                    target_user = self.users_collection.find_one({"telegram_id": target_telegram_id})
-                    if target_user:
-                        target_chibis = target_user.get('chibis', [])
-                        target_chibis.append(chibi_name)
-                        target_timestamps = target_user.get('chibi_timestamps', {})
-                        target_timestamps[chibi_name] = datetime.now()
-                        
-                        self.users_collection.update_one(
-                            {"telegram_id": target_telegram_id},
-                            {"$set": {
-                                "chibis": target_chibis,
-                                "chibi_timestamps": target_timestamps
-                            }}
-                        )
-                    
-                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
-                    
-                    is_prize_chibi = chibi_name in self.all_prize_chibis
-                    
-                    if is_admin and is_prize_chibi:
-                        prize_file_path, _, _ = self.get_prize_chibi(chibi_name)
-                        
-                        if prize_file_path:
-                            prize_text = f"""*🍀 Эй, {target_name}!* 
-_Кажется, ты выиграл в розыгрыше! Поздравляю. Ты получаешь:_
-♦️*{chibi_name}!* 
-_Спасибо за участие!_"""
-                            
-                            with open(prize_file_path, 'rb') as photo:
-                                sent_message = self.bot.send_photo(
-                                    target_telegram_id,
-                                    photo,
-                                    caption=prize_text,
-                                    parse_mode='Markdown'
-                                )
-                                self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
-                            
-                            sender_text = f"""*✨ Призовой чибик отправлен!*
-{target_name} получил призовой чибик {chibi_name}!"""
-                            
-                            sent_message = self.bot.send_message(
-                                call.message.chat.id,
-                                sender_text,
-                                parse_mode='Markdown'
-                            )
-                            self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-                            
-                    else:
-                        sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
-                        self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
-                        
-                        sender_name = call.from_user.first_name or "Отправитель"
-                        sender_text = f"""*✨ Чибик отправлен! 
-Надеюсь, {target_name} он понравится!*"""
-                        
-                        sent_message = self.bot.send_message(
-                            call.message.chat.id,
-                            sender_text,
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
-                        
-                        sticker_id_receiver = "CAACAgIAAxkBAAE9OxxpBRLZ5OANTuRD-97sRPdCONwv0AACU0YAAkVlEErI0vjxKMrHnTYE"
-                        self.bot.send_sticker(target_telegram_id, sticker_id_receiver)
-                        
-                        receiver_text = f"""*💌 Тебе подарок!*
-{sender_name} подарил тебе {chibi_name}!"""
-                        
-                        markup = types.InlineKeyboardMarkup()
-                        btn_view = types.InlineKeyboardButton("👀 Посмотреть", callback_data="warehouse_chibis_1")
-                        markup.add(btn_view)
-                        
-                        sent_message = self.bot.send_message(
-                            target_telegram_id,
-                            receiver_text,
-                            reply_markup=markup,
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
-                    
-                    del self.gift_selections[telegram_id_str]
-                    
-                elif call.data == "gift_cancel":
-                    telegram_id_str = str(call.from_user.id)
-                    
-                    if telegram_id_str in self.gift_selections:
-                        del self.gift_selections[telegram_id_str]
-                    
-                    if telegram_id_str in self.waiting_for_coins:
-                        del self.waiting_for_coins[telegram_id_str]
-                    
-                    self.bot.delete_message(call.message.chat.id, call.message.message_id)
-                    
-                elif call.data == "chibi_click":
-                    self.bot.answer_callback_query(call.id)
-                    
-                elif call.data == "item_click":
-                    self.bot.answer_callback_query(call.id, "Это использовать нельзя")
-                    
-                elif call.data == "empty":
-                    self.bot.answer_callback_query(call.id, "Пустовато здесь!")
-                    
-                else:
-                    self.bot.answer_callback_query(call.id)
-                    
-            except Exception as e:
-                logger.error(f"Ошибка в callback: {e}")
-                self.bot.answer_callback_query(call.id, "⛓️‍💥 Ошибка! Попробуй снова")
-
-    def run(self):
-        logger.info("🚀 Чиби-бот запускается...")
-        self.setup_handlers()
-        
-        if "RENDER" in os.environ:
-            self.setup_flask_routes()
-            PORT = int(os.environ.get('PORT', 5000))
+        // Инициализация приложения
+        function init() {
+            app.initTelegramWebApp();
+            onboarding.init();
+            initEvents();
             
-            def run_flask():
-                self.app.run(host='0.0.0.0', port=PORT)
-            
-            flask_thread = threading.Thread(target=run_flask)
-            flask_thread.daemon = True
-            flask_thread.start()
-            logger.info(f"🌐 Flask сервер запущен на порту {PORT}")
-        
-        logger.info("ОНО ЖИВОЕ!")
-        self.bot.infinity_polling()
+            // Добавляем методы в app
+            app.showErrorButton = errorButton.show;
+            app.hideErrorButton = errorButton.hide;
+        }
 
-def get_token():
-    return os.getenv('BOT_TOKEN')
-
-if __name__ == "__main__":
-    token = get_token()
-    if not token:
-        print("Токен")
-        exit(1)
-    
-    bot = ChibiBot(token)
-    bot.run()
+        window.onload = init;
+    </script>
+</body>
+</html>
