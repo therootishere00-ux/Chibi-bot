@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
+        
         self.test_users = ['tmkazavr', 'ya_admin7']
         
         if "RENDER" in os.environ:
@@ -27,16 +28,16 @@ class ChibiBot:
         
         self.mongo_uri = os.getenv('MONGODB_URI')
         if not self.mongo_uri:
-            logger.error("MONGODB_URI not found!")
-            raise ValueError("MONGODB_URI not found")
+            logger.error("MONGODB_URI не найден!")
+            raise ValueError("MONGODB_URI не найден")
         
         try:
             self.client = MongoClient(self.mongo_uri)
             self.db = self.client.chibibot
             self.users_collection = self.db.users
-            logger.info("✅ MongoDB connected successfully")
+            logger.info("✅ Успешное подключение к MongoDB")
         except Exception as e:
-            logger.error(f"❌ MongoDB connection error: {e}")
+            logger.error(f"❌ Ошибка подключения к MongoDB: {e}")
             raise
         
         self.all_common_chibis = self._scan_chibis_folder("chibis/common")
@@ -53,10 +54,10 @@ class ChibiBot:
         
     def _scan_chibis_folder(self, folder_path):
         if not os.path.exists(folder_path):
-            logger.error(f"Folder {folder_path} not found!")
+            logger.warning(f"Папка {folder_path} не найдена!")
             return []
         
-        chibi_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.png')]
+        chibi_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
         chibi_names = [os.path.splitext(f)[0].replace('_', ' ') for f in chibi_files]
         return sorted(chibi_names)
     
@@ -77,7 +78,7 @@ class ChibiBot:
                         "infinite_chibis": True
                     }}
                 )
-                logger.info(f"✅ Admin {username} initialized")
+                logger.info(f"✅ Админ {username} инициализирован")
             
     def _init_collections(self):
         self.users_collection.create_index("telegram_id", unique=True)
@@ -215,7 +216,7 @@ class ChibiBot:
                 self.used_ids.add(user_id)
                 return user_id
             attempts += 1
-        return f"U{random.randint(1000, 9999)}"
+        return f"U{random.randint(10000, 99999)}"
     
     def get_or_create_user(self, telegram_id, first_name=None, username=None):
         telegram_id_str = str(telegram_id)
@@ -258,7 +259,7 @@ class ChibiBot:
                 user_data["infinite_chibis"] = True
             
             self.users_collection.insert_one(user_data)
-            logger.info(f"New user: {user_id}")
+            logger.info(f"Новый пользователь: {user_id}")
             return user_data, True
 
     def check_user_started(self, user_id):
@@ -310,13 +311,13 @@ class ChibiBot:
             chibi_folder = "chibis/common"
         
         if not os.path.exists(chibi_folder):
-            logger.error(f"Folder {chibi_folder} not found!")
+            logger.error(f"Папка {chibi_folder} не найдена!")
             return None, None, "Common"
         
-        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
+        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
         
         if not chibi_files:
-            logger.error(f"No PNG files in {chibi_folder}!")
+            logger.error(f"В папке {chibi_folder} нет изображений!")
             return None, None, "Common"
         
         random_file = random.choice(chibi_files)
@@ -332,12 +333,12 @@ class ChibiBot:
         chibi_folder = "chibis/prize"
         
         if not os.path.exists(chibi_folder):
-            logger.error(f"Folder {chibi_folder} not found!")
+            logger.error(f"Папка {chibi_folder} не найдена!")
             return None, None, "Prize"
         
         file_path = os.path.join(chibi_folder, f"{chibi_name}.png")
         if not os.path.exists(file_path):
-            logger.error(f"Prize chibi {chibi_name} not found!")
+            logger.error(f"Призовой чибик {chibi_name} не найден!")
             return None, None, "Prize"
         
         return file_path, chibi_name, "Prize"
@@ -572,23 +573,27 @@ class ChibiBot:
                 if is_new_user:
                     welcome_text = f"""✨ *Добро пожаловать, {user_name}!*
 
-Этот бот — коллекция милых чибиков, которые будут радовать тебя каждый день!
+Этот бот — коллекция уникальных чибиков! Собирай их, выполняй задания, обменивайся с друзьями и становись лучшим коллекционером!
 
-📌 *Что тут есть:*
-• 🎴 Собирай коллекцию чибиков
-• 🎯 Выполняй задания
-• 🎁 Получай ежедневные бонусы
-• 🎲 Играй в кости
-• 💝 Обменивайся с друзьями
+*Что можно делать:*
+• 🎁 Получать чибиков каждые 3 часа
+• 🎯 Выполнять задания за коины  
+• 🎰 Играть в кости
+• 🎏 Покупать чиби-паки в лавке
+• 💌 Дарить чибиков друзьям
+• 📦 Собирать коллекцию
 
-*Начни с команды /menu*"""
+*Начни прямо сейчас!*"""
                     markup = types.InlineKeyboardMarkup()
-                    btn_channel = types.InlineKeyboardButton('📢 Наш тгк', url='https://t.me/+3gB0QMtq_vNjNmQy')
+                    btn_channel = types.InlineKeyboardButton('📢 Наш тгк', url='https://t.me/chibi_channel')
                     markup.add(btn_channel)
                     sent_message = self.bot.send_message(message.chat.id, welcome_text, reply_markup=markup, parse_mode='Markdown')
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                 else:
-                    sent_message = self.bot.send_message(message.chat.id, "✨ *С возвращением!*", parse_mode='Markdown')
+                    welcome_back = f"""✨ *С возвращением, {user_name}!*
+
+Рад снова тебя видеть! Продолжай собирать свою коллекцию чибиков!"""
+                    sent_message = self.bot.send_message(message.chat.id, welcome_back, parse_mode='Markdown')
                     self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
                     
             except Exception as e:
@@ -1103,7 +1108,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                 
                 markup = types.InlineKeyboardMarkup(row_width=2)
                 btn_warehouse = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
-                btn_channel = types.InlineKeyboardButton("Наш тгк", url='https://t.me/+3gB0QMtq_vNjNmQy')
+                btn_channel = types.InlineKeyboardButton("📢 Наш тгк", url='https://t.me/chibi_channel')
                 
                 bonus_cooldown = self.check_bonus_cooldown(message.from_user.id)
                 if bonus_cooldown:
@@ -1225,7 +1230,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                 if total_pages > 1:
                     nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
                 
-                nav_buttons.append(types.InlineKeyboardButton("Отменить", callback_data="gift_cancel"))
+                nav_buttons.append(types.InlineKeyboardButton("❌ Отменить", callback_data="gift_cancel"))
                 
                 if total_pages > 1:
                     nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"gift_page_{(current_page % total_pages) + 1}"))
@@ -1281,7 +1286,7 @@ _•••••••••••••••_
 
                     markup = types.InlineKeyboardMarkup()
                     btn_confirm = types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"gift_confirm_coins_{coin_amount}")
-                    btn_cancel = types.InlineKeyboardButton("🙅‍♂️ Отмена", callback_data="gift_cancel")
+                    btn_cancel = types.InlineKeyboardButton("❌ Отмена", callback_data="gift_cancel")
                     markup.add(btn_confirm, btn_cancel)
                     
                     self.bot.reply_to(message, confirm_text, reply_markup=markup, parse_mode='Markdown')
@@ -1431,9 +1436,9 @@ _•••••••••••••••_
 Выбери, на какой раздел склада хочешь глянуть"""
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
-                    btn_chibis = types.InlineKeyboardButton("Чибики", callback_data="warehouse_chibis_1")
-                    btn_items = types.InlineKeyboardButton("Предметы", callback_data="warehouse_items_1")
-                    btn_back = types.InlineKeyboardButton("Назад", callback_data="menu_back")
+                    btn_chibis = types.InlineKeyboardButton("🧩 Чибики", callback_data="warehouse_chibis_1")
+                    btn_items = types.InlineKeyboardButton("🎒 Предметы", callback_data="warehouse_items_1")
+                    btn_back = types.InlineKeyboardButton("🔙 Назад", callback_data="menu_back")
                     
                     markup.add(btn_chibis, btn_items)
                     markup.add(btn_back)
@@ -1456,9 +1461,6 @@ _•••••••••••••••_
                     
                     markup = types.InlineKeyboardMarkup()
                     
-                    btn_view = types.InlineKeyboardButton("👀 Просмотр", web_app=types.WebAppInfo(url="https://therootishere00-ux.github.io/Chibi-bot/"))
-                    markup.add(btn_view)
-                    
                     if chibis:
                         for chibi_name, count in chibis:
                             if count > 1:
@@ -1473,7 +1475,7 @@ _•••••••••••••••_
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_chibis_{((current_page-2) % total_pages) + 1}"))
                     
-                    nav_buttons.append(types.InlineKeyboardButton("Назад", callback_data="menu_warehouse"))
+                    nav_buttons.append(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_warehouse"))
                     
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"warehouse_chibis_{(current_page % total_pages) + 1}"))
@@ -1515,7 +1517,7 @@ _•••••••••••••••_
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_items_{((current_page-2) % total_pages) + 1}"))
                     
-                    nav_buttons.append(types.InlineKeyboardButton("Назад", callback_data="menu_warehouse"))
+                    nav_buttons.append(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_warehouse"))
                     
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"warehouse_items_{(current_page % total_pages) + 1}"))
@@ -1551,7 +1553,7 @@ _•••••••••••••••_
                         btn_open_all = types.InlineKeyboardButton(f"Открыть х{pack_count}", callback_data=f"open_pack_{pack_count}")
                         markup.add(btn_open1, btn_open_all)
                     
-                    btn_back = types.InlineKeyboardButton("Назад", callback_data="warehouse_items_1")
+                    btn_back = types.InlineKeyboardButton("🔙 Назад", callback_data="warehouse_items_1")
                     markup.add(btn_back)
                     
                     self.bot.edit_message_text(
@@ -1633,7 +1635,7 @@ _•••••••••••••••_
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"warehouse_items_{((current_page-2) % total_pages) + 1}"))
                     
-                    nav_buttons.append(types.InlineKeyboardButton("Назад", callback_data="menu_warehouse"))
+                    nav_buttons.append(types.InlineKeyboardButton("🔙 Назад", callback_data="menu_warehouse"))
                     
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"warehouse_items_{(current_page % total_pages) + 1}"))
@@ -1653,8 +1655,8 @@ _•••••••••••••••_
 Да брось, знаю что так руки и чешутся!"""
                     
                     markup = types.InlineKeyboardMarkup()
-                    btn_buy = types.InlineKeyboardButton("Купить (120)", callback_data="buy_chibi_pack")
-                    btn_back = types.InlineKeyboardButton("Назад", callback_data="mart_back")
+                    btn_buy = types.InlineKeyboardButton("Купить (120💰)", callback_data="buy_chibi_pack")
+                    btn_back = types.InlineKeyboardButton("🔙 Назад", callback_data="mart_back")
                     markup.add(btn_buy)
                     markup.add(btn_back)
                     
@@ -1775,7 +1777,7 @@ _•••••••••••••••_
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     btn_warehouse = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
-                    btn_channel = types.InlineKeyboardButton("Наш тгк", url='https://t.me/+3gB0QMtq_vNjNmQy')
+                    btn_channel = types.InlineKeyboardButton("📢 Наш тгк", url='https://t.me/chibi_channel')
                     
                     bonus_cooldown = self.check_bonus_cooldown(call.from_user.id)
                     user_data = self.users_collection.find_one({"telegram_id": str(call.from_user.id)})
@@ -1821,7 +1823,7 @@ _•••••••••••••••_
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("◀️", callback_data=f"gift_page_{((current_page-2) % total_pages) + 1}"))
                     
-                    nav_buttons.append(types.InlineKeyboardButton("Отменить", callback_data="gift_cancel"))
+                    nav_buttons.append(types.InlineKeyboardButton("❌ Отменить", callback_data="gift_cancel"))
                     
                     if total_pages > 1:
                         nav_buttons.append(types.InlineKeyboardButton("▶️", callback_data=f"gift_page_{(current_page % total_pages) + 1}"))
@@ -1847,7 +1849,7 @@ _•••••••••••••••_
 _Ответь на сообщение числом коинов, сколько собрался дарить_"""
                     
                     markup = types.InlineKeyboardMarkup()
-                    btn_cancel = types.InlineKeyboardButton("Отменить", callback_data="gift_cancel")
+                    btn_cancel = types.InlineKeyboardButton("❌ Отменить", callback_data="gift_cancel")
                     markup.add(btn_cancel)
                     
                     self.bot.edit_message_text(
@@ -1942,7 +1944,7 @@ _Ответь на сообщение числом коинов, сколько 
                     
                     markup = types.InlineKeyboardMarkup()
                     btn_confirm = types.InlineKeyboardButton("✅ Подтвердить", callback_data="gift_confirm")
-                    btn_cancel = types.InlineKeyboardButton("🙅‍♂️ Отмена", callback_data="gift_cancel")
+                    btn_cancel = types.InlineKeyboardButton("❌ Отмена", callback_data="gift_cancel")
                     markup.add(btn_confirm, btn_cancel)
                     
                     self.bot.edit_message_text(
@@ -2047,7 +2049,7 @@ _Спасибо за участие!_"""
 {sender_name} подарил тебе {chibi_name}!"""
                         
                         markup = types.InlineKeyboardMarkup()
-                        btn_view = types.InlineKeyboardButton("Посмотреть", callback_data="warehouse_chibis_1")
+                        btn_view = types.InlineKeyboardButton("👀 Посмотреть", callback_data="warehouse_chibis_1")
                         markup.add(btn_view)
                         
                         sent_message = self.bot.send_message(
@@ -2085,10 +2087,10 @@ _Спасибо за участие!_"""
                     
             except Exception as e:
                 logger.error(f"Ошибка в callback: {e}")
-                self.bot.answer_callback_query(call.id, "Не твое!", parse_mode='Markdown')
+                self.bot.answer_callback_query(call.id, "⛓️‍💥 Ошибка! Попробуй снова")
 
     def run(self):
-        logger.info("ОНО ЖИВОЕ!")
+        logger.info("🚀 Чиби-бот запускается...")
         self.setup_handlers()
         
         if "RENDER" in os.environ:
@@ -2101,8 +2103,9 @@ _Спасибо за участие!_"""
             flask_thread = threading.Thread(target=run_flask)
             flask_thread.daemon = True
             flask_thread.start()
-            logger.info(f"🚀 Flask сервер запущен на порту {PORT}")
+            logger.info(f"🌐 Flask сервер запущен на порту {PORT}")
         
+        logger.info("ОНО ЖИВОЕ!")
         self.bot.infinity_polling()
 
 def get_token():
@@ -2111,7 +2114,7 @@ def get_token():
 if __name__ == "__main__":
     token = get_token()
     if not token:
-        print("❌ Токен не найден!")
+        print("Токен")
         exit(1)
     
     bot = ChibiBot(token)
