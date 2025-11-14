@@ -905,8 +905,6 @@
     <script>
         // Константы
         const BOT_API_URL = 'https://chibi-bot-3d4x.onrender.com';
-        // Добавляем версию для предотвращения кэширования изображений
-        const IMAGE_VERSION = 'v1.2';
         
         // Элементы слайд-шоу
         const onboardingElements = {
@@ -993,29 +991,26 @@
                 return false;
             },
 
-            // Функция для загрузки изображений с обработкой ошибок и версией
+            // Функция для загрузки изображений с обработкой ошибок
             loadImage(imgElement, url, onLoadCallback = null) {
-                // Добавляем параметр версии для предотвращения кэширования
-                const versionedUrl = `${url}?v=${IMAGE_VERSION}`;
-                
                 imgElement.classList.add('loading');
                 imgElement.classList.remove('loaded');
                 
                 const tempImg = new Image();
                 tempImg.onload = () => {
-                    imgElement.src = versionedUrl;
+                    imgElement.src = url;
                     imgElement.classList.remove('loading');
                     imgElement.classList.add('loaded');
                     if (onLoadCallback) onLoadCallback();
                 };
                 
                 tempImg.onerror = () => {
-                    console.warn('Failed to load image:', versionedUrl);
+                    console.warn('Failed to load image:', url);
                     imgElement.classList.remove('loading');
                     // Можно показать placeholder вместо изображения
                 };
                 
-                tempImg.src = versionedUrl;
+                tempImg.src = url;
             },
 
             // Функция для плавного отображения экрана
