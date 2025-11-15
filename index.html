@@ -49,6 +49,7 @@
             background: #1F2021;
             display: flex;
             align-items: center;
+            justify-content: space-between;
             padding: 0 16px;
             z-index: 100;
             border-bottom: 0.5px solid #2A2B2C;
@@ -57,6 +58,27 @@
         .logo {
             height: 32px;
             width: auto;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+        }
+
+        .view-toggle {
+            width: 28px;
+            height: 28px;
+            opacity: 0.8;
+            transition: opacity 0.2s ease;
+            filter: invert(1) brightness(2);
+        }
+
+        .view-toggle:active {
+            opacity: 1;
+        }
+
+        .view-toggle.hidden {
+            display: none;
         }
 
         /* Main Screen */
@@ -145,50 +167,80 @@
             height: 100vh;
         }
 
+        /* Grid layouts */
         .chibi-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
             gap: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(3, 1fr);
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(2, 1fr);
+        }
+
+        .grid-1 {
+            grid-template-columns: 1fr;
         }
 
         .chibi-card {
             background: #2A2B2C;
-            border-radius: 14px;
-            aspect-ratio: 1;
+            border-radius: 16px;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 12px;
-            transition: background-color 0.1s ease;
             position: relative;
+            transition: all 0.2s ease;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
         }
 
         .chibi-card:active {
+            transform: scale(0.98);
             background: #353637;
         }
 
-        .chibi-image {
-            width: 60px;
-            height: 60px;
-            margin-bottom: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        .chibi-image-container {
+            position: relative;
+            width: 100%;
+            overflow: hidden;
         }
 
-        .chibi-image img {
-            max-width: 100%;
-            max-height: 100%;
-            border-radius: 8px;
+        .grid-3 .chibi-image-container {
+            aspect-ratio: 1/1;
+        }
+
+        .grid-2 .chibi-image-container {
+            aspect-ratio: 1/1.1;
+        }
+
+        .grid-1 .chibi-image-container {
+            aspect-ratio: 1/1.2;
+        }
+
+        .chibi-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .chibi-info {
+            padding: 12px 8px 8px;
+            position: relative;
         }
 
         .chibi-name {
-            font-size: 11px;
-            text-align: center;
-            font-weight: 500;
-            line-height: 1.2;
+            font-size: 13px;
+            font-weight: 600;
             color: #FFFFFF;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            line-height: 1.2;
         }
 
         .locked-overlay {
@@ -197,24 +249,25 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(42, 43, 44, 0.9);
-            border-radius: 14px;
+            background: rgba(31, 32, 33, 0.85);
             display: flex;
             align-items: center;
             justify-content: center;
             flex-direction: column;
+            backdrop-filter: blur(2px);
         }
 
-        .locked-overlay svg {
-            width: 24px;
-            height: 24px;
-            fill: #8E8E93;
-            margin-bottom: 4px;
+        .locked-icon {
+            width: 32px;
+            height: 32px;
+            margin-bottom: 8px;
+            opacity: 0.7;
         }
 
         .locked-text {
-            font-size: 10px;
+            font-size: 12px;
             color: #8E8E93;
+            font-weight: 500;
         }
 
         /* Scrollbar Hidden */
@@ -228,6 +281,12 @@
     <!-- Header -->
     <div class="header">
         <img src="https://i.ibb.co/zTB331HR/image.png" alt="Chibeki" class="logo">
+        <div class="header-right">
+            <img src="https://img.icons8.com/?size=100&id=72pUV8rLnReF&format=png&color=000000" 
+                 class="view-toggle hidden" 
+                 id="viewToggle"
+                 onclick="toggleViewMode()">
+        </div>
     </div>
 
     <!-- Main Screen -->
@@ -307,15 +366,15 @@
 
     <!-- Collection Screens -->
     <div class="screen collection-screen hidden" id="commonCollectionScreen">
-        <div class="chibi-grid" id="commonGrid"></div>
+        <div class="chibi-grid grid-3" id="commonGrid"></div>
     </div>
 
     <div class="screen collection-screen hidden" id="secretCollectionScreen">
-        <div class="chibi-grid" id="secretGrid"></div>
+        <div class="chibi-grid grid-3" id="secretGrid"></div>
     </div>
 
     <div class="screen collection-screen hidden" id="prizeCollectionScreen">
-        <div class="chibi-grid" id="prizeGrid"></div>
+        <div class="chibi-grid grid-3" id="prizeGrid"></div>
     </div>
 
     <script>
@@ -330,6 +389,7 @@
         };
         
         let currentScreen = 'main';
+        let currentViewMode = 3; // 3, 2, or 1 columns
 
         // Initialize TMA
         function initTelegramApp() {
@@ -354,6 +414,7 @@
             currentScreen = type;
             
             tg.BackButton.show();
+            document.getElementById('viewToggle').classList.remove('hidden');
             renderCollection(type);
         }
 
@@ -363,6 +424,7 @@
             document.getElementById('mainScreen').classList.remove('hidden');
             currentScreen = 'main';
             tg.BackButton.hide();
+            document.getElementById('viewToggle').classList.add('hidden');
         }
 
         function hideAllScreens() {
@@ -370,6 +432,19 @@
             document.getElementById('commonCollectionScreen').classList.add('hidden');
             document.getElementById('secretCollectionScreen').classList.add('hidden');
             document.getElementById('prizeCollectionScreen').classList.add('hidden');
+        }
+
+        // View mode toggle
+        function toggleViewMode() {
+            tg.HapticFeedback.impactOccurred('light');
+            
+            currentViewMode = currentViewMode === 3 ? 2 : currentViewMode === 2 ? 1 : 3;
+            
+            const grid = document.getElementById(`${currentScreen}Grid`);
+            grid.className = `chibi-grid grid-${currentViewMode}`;
+            
+            // Re-render collection to update layout
+            renderCollection(currentScreen);
         }
 
         // Telegram Popup for bot launch
@@ -531,26 +606,23 @@
             commonStats.textContent = `Твоя шедевральная коллекция`;
             commonBadge.textContent = `${commonProgress}%`;
             
-            // Update secret collection
+            // Update secret collection - only show if has at least one chibi
             const secretCard = document.getElementById('secretCard');
-            const secretStats = document.getElementById('secretStats');
             const secretBadge = document.getElementById('secretBadge');
             
             if (userData.secret.collected.length > 0) {
                 secretCard.classList.remove('hidden');
-                secretStats.textContent = `Абсолютно секретно`;
                 secretBadge.classList.remove('hidden');
             } else {
                 secretCard.classList.add('hidden');
+                secretBadge.classList.add('hidden');
             }
             
-            // Update prize collection
+            // Update prize collection - only show if has at least one chibi
             const prizeCard = document.getElementById('prizeCard');
-            const prizeStats = document.getElementById('prizeStats');
             
             if (userData.prize.collected.length > 0) {
                 prizeCard.classList.remove('hidden');
-                prizeStats.textContent = `Твои чибики с розыгрышей`;
             } else {
                 prizeCard.classList.add('hidden');
             }
@@ -598,12 +670,15 @@
                 const imageUrl = `https://raw.githubusercontent.com/therootishere00-ux/Chibi-bot/main/chibis/${type}/${chibiName.replace(/ /g, '_')}.png`;
                 
                 card.innerHTML = `
-                    <div class="chibi-image">
-                        <img src="${imageUrl}" alt="${chibiName}" 
-                             style="opacity: ${isCollected ? '1' : '0.3'}"
+                    <div class="chibi-image-container">
+                        <img src="${imageUrl}" alt="${chibiName}" class="chibi-image"
                              onerror="this.style.display='none'">
                     </div>
-                    <div class="chibi-name">${chibiName}</div>
+                    ${isCollected ? `
+                        <div class="chibi-info">
+                            <div class="chibi-name">${chibiName}</div>
+                        </div>
+                    ` : ''}
                 `;
                 
                 // Add lock overlay for uncollected chibis (only in common collection)
@@ -611,7 +686,7 @@
                     const lockOverlay = document.createElement('div');
                     lockOverlay.className = 'locked-overlay';
                     lockOverlay.innerHTML = `
-                        <svg viewBox="0 0 24 24" width="24" height="24" fill="#8E8E93">
+                        <svg class="locked-icon" viewBox="0 0 24 24" fill="#8E8E93">
                             <path d="M18,21H6c-1.657,0-3-1.343-3-3v-8c0-1.657,1.343-3,3-3h12c1.657,0,3,1.343,3,3v8 C21,19.657,19.657,21,18,21z" opacity=".35"></path>
                             <path d="M8,7c0-2.209,1.791-4,4-4s4,1.791,4,4h2c0-3.314-2.686-6-6-6S6,3.686,6,7H8z"></path>
                             <path d="M12,12c-1.105,0-2,0.895-2,2s0.895,2,2,2s2-0.895,2-2S13.105,12,12,12z"></path>
