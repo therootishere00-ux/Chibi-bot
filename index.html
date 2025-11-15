@@ -26,6 +26,10 @@
             overflow: hidden;
         }
 
+        body.no-animations * {
+            transition: none !important;
+        }
+
         .screen {
             position: absolute;
             top: 0;
@@ -106,7 +110,6 @@
             justify-content: center;
             padding: 8px 14px;
             opacity: 1;
-            transition: all 0.2s ease;
         }
 
         .footer-tab.active {
@@ -147,7 +150,6 @@
             border-radius: 50%;
             border: 2px solid transparent;
             overflow: hidden;
-            transition: border-color 0.2s ease;
         }
 
         .avatar-circle img {
@@ -208,7 +210,7 @@
             margin-bottom: 8px;
             display: flex;
             align-items: center;
-            transition: background-color 0.1s ease;
+            transition: background-color 0.15s ease;
         }
 
         .collection-card:active {
@@ -319,7 +321,7 @@
             display: flex;
             flex-direction: column;
             position: relative;
-            transition: all 0.2s ease;
+            transition: all 0.15s ease;
             overflow: hidden;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
         }
@@ -422,7 +424,7 @@
             height: 100px;
             border-radius: 16px;
             overflow: hidden;
-            margin-bottom: 16px;
+            margin-bottom: 21px; /* Изменено с 16px на 21px */
             background: #2A2B2C;
             display: flex;
             align-items: center;
@@ -466,7 +468,7 @@
             display: flex;
             align-items: center;
             padding: 16px;
-            transition: background-color 0.2s ease;
+            transition: background-color 0.15s ease;
         }
 
         .setting-item:active {
@@ -614,7 +616,7 @@
         </div>
         
         <div class="footer-tab" onclick="switchTab('friends')">
-            <img src="https://img.icons8.com/?size=100&id=egqjhmkOFCqZ&format=png&color=8E8E93" alt="Друзья">
+            <img src="https://img.icons8.com/?size=100&id=oxOwUZwLhjW3&format=png&color=000000" alt="Друзья">
             <div class="tab-label">Друзья</div>
         </div>
         
@@ -638,16 +640,16 @@
                     <div class="collection-badge" id="commonBadge">0%</div>
                 </div>
                 
-                <div class="collection-card hidden" onclick="openCollection('secret')" id="secretCard">
+                <div class="collection-card" onclick="openCollection('secret')" id="secretCard">
                     <div class="collection-icon" id="secretIcon"></div>
                     <div class="collection-info">
                         <div class="collection-name">Секретные чибики</div>
                         <div class="collection-stats" id="secretStats">Абсолютно секретно</div>
                     </div>
-                    <div class="collection-badge hidden" id="secretBadge">NEW</div>
+                    <div class="collection-badge" id="secretBadge">NEW</div>
                 </div>
                 
-                <div class="collection-card hidden" onclick="openCollection('prize')" id="prizeCard">
+                <div class="collection-card" onclick="openCollection('prize')" id="prizeCard">
                     <div class="collection-icon" id="prizeIcon"></div>
                     <div class="collection-info">
                         <div class="collection-name">Призовые чибики</div>
@@ -802,9 +804,17 @@
             }
             
             if (settings.themeColor && tg.themeParams.accent_text_color) {
-                document.documentElement.style.setProperty('--accent-color', tg.themeParams.accent_text_color);
+                const accentColor = tg.themeParams.accent_text_color;
+                document.documentElement.style.setProperty('--accent-color', accentColor);
             } else {
                 document.documentElement.style.setProperty('--accent-color', '#007AFF');
+            }
+            
+            // Apply animations setting
+            if (settings.smoothAnimations) {
+                document.body.classList.remove('no-animations');
+            } else {
+                document.body.classList.add('no-animations');
             }
         }
 
@@ -830,13 +840,8 @@
             if (user && user.photo_url) {
                 avatarCircle.innerHTML = `<img src="${user.photo_url}" alt="Avatar">`;
             } else {
-                avatarCircle.innerHTML = `
-                    <svg viewBox="0 0 24 24" fill="#8E8E93">
-                        <path d="M12,2C6.477,2,2,6.477,2,12s4.477,10,10,10s10-4.477,10-10S17.523,2,12,2z" opacity=".35"></path>
-                        <path d="M12,6c-1.657,0-3,1.343-3,3s1.343,3,3,3s3-1.343,3-3S13.657,6,12,6z"></path>
-                        <path d="M12,13c-3.6,0-6,2-6,4c0,1,1,2,6,2s6-1,6-2C18,15,15.6,13,12,13z"></path>
-                    </svg>
-                `;
+                // Пустой круг с контуром, без иконки
+                avatarCircle.innerHTML = '';
             }
         }
 
@@ -850,13 +855,7 @@
                 if (user.photo_url) {
                     profileAvatar.innerHTML = `<img src="${user.photo_url}" alt="Profile Avatar">`;
                 } else {
-                    profileAvatar.innerHTML = `
-                        <svg viewBox="0 0 24 24" width="48" height="48" fill="#8E8E93">
-                            <path d="M12,2C6.477,2,2,6.477,2,12s4.477,10,10,10s10-4.477,10-10S17.523,2,12,2z" opacity=".35"></path>
-                            <path d="M12,6c-1.657,0-3,1.343-3,3s1.343,3,3,3s3-1.343,3-3S13.657,6,12,6z"></path>
-                            <path d="M12,13c-3.6,0-6,2-6,4c0,1,1,2,6,2s6-1,6-2C18,15,15.6,13,12,13z"></path>
-                        </svg>
-                    `;
+                    profileAvatar.innerHTML = '';
                 }
                 
                 profileName.textContent = user.first_name || 'Пользователь';
@@ -1126,23 +1125,22 @@
             commonStats.textContent = `Твоя шедевральная коллекция`;
             commonBadge.textContent = `${commonProgress}%`;
             
+            // Скрываем плашки секретных и призовых коллекций, если нет открытых чибиков
             const secretCard = document.getElementById('secretCard');
+            const prizeCard = document.getElementById('prizeCard');
             const secretBadge = document.getElementById('secretBadge');
             
             if (userData.secret.collected.length > 0) {
-                secretCard.classList.remove('hidden');
-                secretBadge.classList.remove('hidden');
+                secretCard.style.display = 'flex';
+                secretBadge.textContent = 'NEW';
             } else {
-                secretCard.classList.add('hidden');
-                secretBadge.classList.add('hidden');
+                secretCard.style.display = 'none';
             }
             
-            const prizeCard = document.getElementById('prizeCard');
-            
             if (userData.prize.collected.length > 0) {
-                prizeCard.classList.remove('hidden');
+                prizeCard.style.display = 'flex';
             } else {
-                prizeCard.classList.add('hidden');
+                prizeCard.style.display = 'none';
             }
         }
 
