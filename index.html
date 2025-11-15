@@ -106,9 +106,10 @@
         }
 
         .collection-icon img {
-            width: 100%;
-            height: 100%;
+            width: 32px;
+            height: 32px;
             object-fit: cover;
+            border-radius: 6px;
         }
 
         .collection-info {
@@ -241,18 +242,18 @@
                 </div>
                 <div class="collection-info">
                     <div class="collection-name">Обычные чибики</div>
-                    <div class="collection-stats" id="commonStats">Собрано: 0/0</div>
+                    <div class="collection-stats" id="commonStats">Твоя шедевральная коллекция</div>
                 </div>
                 <div class="collection-badge" id="commonBadge">0%</div>
             </div>
             
-            <div class="collection-card" onclick="openCollection('secret')">
+            <div class="collection-card hidden" onclick="openCollection('secret')" id="secretCard">
                 <div class="collection-icon" id="secretIcon">
                     <!-- Random chibi image will be loaded here -->
                 </div>
                 <div class="collection-info">
                     <div class="collection-name">Секретные чибики</div>
-                    <div class="collection-stats" id="secretStats">Не открыто</div>
+                    <div class="collection-stats" id="secretStats">Абсолютно секретно</div>
                 </div>
                 <div class="collection-badge hidden" id="secretBadge">NEW</div>
             </div>
@@ -263,7 +264,7 @@
                 </div>
                 <div class="collection-info">
                     <div class="collection-name">Призовые чибики</div>
-                    <div class="collection-stats" id="prizeStats">Получено: 0</div>
+                    <div class="collection-stats" id="prizeStats">Твои чибики с розыгрышей</div>
                 </div>
             </div>
         </div>
@@ -349,11 +350,6 @@
         function openCollection(type) {
             tg.HapticFeedback.impactOccurred('light');
             
-            if (userData[type].collected.length === 0 && type !== 'common') {
-                showBotAlert();
-                return;
-            }
-            
             hideAllScreens();
             document.getElementById(`${type}CollectionScreen`).classList.remove('hidden');
             currentScreen = type;
@@ -377,11 +373,18 @@
             document.getElementById('prizeCollectionScreen').classList.add('hidden');
         }
 
+        // Check if user has any chibis
+        function hasAnyChibis() {
+            return userData.common.collected.length > 0 || 
+                   userData.secret.collected.length > 0 || 
+                   userData.prize.collected.length > 0;
+        }
+
         // Telegram Popup for bot launch
         function showBotAlert() {
             tg.showPopup({
                 title: 'Запусти бота! 🚀',
-                message: 'Чтобы увидеть эту коллекцию, нужно сначала запустить @chibeki_bot',
+                message: 'Чтобы начать собирать чибиков, нужно сначала запустить @chibeki_bot',
                 buttons: [
                     {
                         type: 'default',
@@ -408,12 +411,12 @@
             const articles = {
                 dice: {
                     title: 'Что такое кости?',
-                    message: 'И с чем их едят\n\nКости - это азартная игра, где ты ставишь коины и бросаешь виртуальный кубик. При выпадении четных чисел (2, 4, 6) ты выигрываешь 70% от ставки! Нечетные числа приносят потерю ставки.',
+                    message: 'Подробно расскажем, как работает игра в кости и как увеличить свои шансы на выигрыш.',
                     url: 'https://example.com/dice-guide'
                 },
                 help: {
                     title: 'Как получить помощь?',
-                    message: 'Помощь от админов\n\nЕсли у тебя возникли проблемы с ботом или есть вопросы:\n\n• Напиши @ya_admin7 в Telegram\n• Опиши свою проблему подробно\n• Приложи скриншоты если нужно\n\nАдмины ответят в течение 24 часов!',
+                    message: 'Подробно расскажем, как обратиться к админам и решить любые проблемы с ботом.',
                     url: 'https://t.me/ya_admin7'
                 }
             };
@@ -425,18 +428,18 @@
                 message: article.message,
                 buttons: [
                     {
-                        type: 'default',
-                        text: type === 'help' ? 'Написать админу' : 'Читать подробнее',
-                        id: 'action'
+                        type: type === 'help' ? 'destructive' : 'default',
+                        text: 'Читать',
+                        id: 'read'
                     },
                     {
                         type: 'cancel',
-                        text: 'Закрыть',
-                        id: 'close'
+                        text: 'Отмена',
+                        id: 'cancel'
                     }
                 ]
             }, function(buttonId) {
-                if (buttonId === 'action') {
+                if (buttonId === 'read') {
                     tg.openLink(article.url);
                 }
             });
@@ -446,8 +449,13 @@
         async function loadUserData() {
             try {
                 const user = tg.initDataUnsafe?.user;
+                
+                // Always show bot alert for @ya_admin7
+                if (user && user.username === 'ya_admin7') {
+                    setTimeout(showBotAlert, 1000);
+                }
+                
                 if (!user) {
-                    setTimeout(showBotAlert, 500);
                     return;
                 }
 
@@ -456,9 +464,13 @@
                 updateMainScreen();
                 updateCollectionIcons();
                 
+                // Show bot alert if user has no chibis at all
+                if (!hasAnyChibis() && user.username !== 'ya_admin7') {
+                    setTimeout(showBotAlert, 1000);
+                }
+                
             } catch (error) {
                 console.error('Error loading data:', error);
-                setTimeout(showBotAlert, 500);
             }
         }
 
@@ -544,28 +556,29 @@
             const commonProgress = userData.common.all.length > 0 ? 
                 Math.round((userData.common.collected.length / userData.common.all.length) * 100) : 0;
             
-            commonStats.textContent = `Собрано: ${userData.common.collected.length}/${userData.common.all.length}`;
+            commonStats.textContent = 'Твоя шедевральная коллекция';
             commonBadge.textContent = `${commonProgress}%`;
             
-            // Update secret collection
+            // Update secret collection - show only if has secret chibis
+            const secretCard = document.getElementById('secretCard');
             const secretStats = document.getElementById('secretStats');
             const secretBadge = document.getElementById('secretBadge');
             
             if (userData.secret.collected.length > 0) {
-                secretStats.textContent = `Открыто: ${userData.secret.collected.length}`;
+                secretCard.classList.remove('hidden');
+                secretStats.textContent = 'Абсолютно секретно';
                 secretBadge.classList.remove('hidden');
             } else {
-                secretStats.textContent = 'Не открыто';
-                secretBadge.classList.add('hidden');
+                secretCard.classList.add('hidden');
             }
             
-            // Update prize collection
+            // Update prize collection - show only if has prize chibis
             const prizeCard = document.getElementById('prizeCard');
             const prizeStats = document.getElementById('prizeStats');
             
             if (userData.prize.collected.length > 0) {
                 prizeCard.classList.remove('hidden');
-                prizeStats.textContent = `Получено: ${userData.prize.collected.length}`;
+                prizeStats.textContent = 'Твои чибики с розыгрышей';
             } else {
                 prizeCard.classList.add('hidden');
             }
