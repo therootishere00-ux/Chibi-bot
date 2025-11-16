@@ -53,7 +53,7 @@ class ChibiBot:
         self.gift_selections = {}
         self.message_owners = {}
         self.waiting_for_coins = {}
-        self.inline_collections = {}
+        self.inline_sessions = {}
             
     def _scan_chibis_folder(self, folder_path):
         if not os.path.exists(folder_path):
@@ -505,20 +505,19 @@ class ChibiBot:
             "all_prize": self.all_prize_chibis
         }
 
-    def get_user_unique_chibis(self, telegram_id):
-        telegram_id_str = str(telegram_id)
-        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
-        if not user_data:
-            return []
+    def get_all_chibi_files(self):
+        all_chibis = []
         
-        return sorted(list(set(user_data.get('chibis', []))))
-
-    def get_chibi_image_path(self, chibi_name):
-        for folder in ["chibis/common", "chibis/secret", "chibis/prize"]:
-            file_path = os.path.join(folder, f"{chibi_name.replace(' ', '_')}.png")
-            if os.path.exists(file_path):
-                return file_path
-        return None
+        for folder in ["common", "secret", "prize"]:
+            folder_path = f"chibis/{folder}"
+            if os.path.exists(folder_path):
+                chibi_files = [f for f in os.listdir(folder_path) if f.lower().endswith('.png')]
+                for file in chibi_files:
+                    file_path = os.path.join(folder_path, file)
+                    chibi_name = os.path.splitext(file)[0].replace('_', ' ')
+                    all_chibis.append((chibi_name, file_path))
+        
+        return sorted(all_chibis, key=lambda x: x[0])
 
     def setup_flask_routes(self):
         @self.app.route('/')
@@ -554,6 +553,77 @@ class ChibiBot:
                 return jsonify({"error": "Internal server error"}), 500
 
     def setup_handlers(self):
+        @self.bot.inline_handler(func=lambda query: True)
+        def inline_query(inline_query):
+            try:
+                all_chibis = self.get_all_chibi_files()
+                if not all_chibis:
+                    return
+                
+                first_chibi_name, first_chibi_path = all_chibis[0]
+                
+                with open(first_chibi_path, 'rb') as photo:
+                    msg_content = types.InputTextMessageContent(
+                        f"🔥 *Коллекция игрока {inline_query.from_user.first_name}* \n_Со временем она будет расти. По крайней мере, так задумано…_"
+                    )
+                    
+                    result = types.InlineQueryResultPhoto(
+                        id='1',
+                        photo_url='https://via.placeholder.com/300',  # Заглушка
+                        thumb_url='https://via.placeholder.com/100',
+                        title='Показать свою коллекцию',
+                        description=f'Чибиков: {len(all_chibis)}',
+                        caption=f"🔥 *Коллекция игрока {inline_query.from_user.first_name}* \n_Со временем она будет расти. По крайней мере, так задумано…_",
+                        parse_mode='Markdown',
+                        reply_markup=types.InlineKeyboardMarkup().row(
+                            types.InlineKeyboardButton("◀️", callback_data="inline_prev_0"),
+                            types.InlineKeyboardButton("▶️", callback_data="inline_next_0")
+                        )
+                    )
+                    
+                    self.bot.answer_inline_query(inline_query.id, [result])
+                    
+            except Exception as e:
+                logger.error(f"Ошибка в inline: {e}")
+
+        @self.bot.callback_query_handler(func=lambda call: call.data.startswith('inline_'))
+        def inline_callback_handler(call):
+            try:
+                current_index = int(call.data.split('_')[-1])
+                all_chibis = self.get_all_chibi_files()
+                
+                if not all_chibis:
+                    self.bot.answer_callback_query(call.id, "Коллекция пуста!")
+                    return
+                
+                if call.data.startswith('inline_prev'):
+                    new_index = (current_index - 1) % len(all_chibis)
+                else:
+                    new_index = (current_index + 1) % len(all_chibis)
+                
+                chibi_name, chibi_path = all_chibis[new_index]
+                
+                with open(chibi_path, 'rb') as photo:
+                    self.bot.edit_message_media(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        media=types.InputMediaPhoto(
+                            photo,
+                            caption=f"🔥 *Коллекция игрока {call.from_user.first_name}* \n_Со временем она будет расти. По крайней мере, так задумано…_",
+                            parse_mode='Markdown'
+                        ),
+                        reply_markup=types.InlineKeyboardMarkup().row(
+                            types.InlineKeyboardButton("◀️", callback_data=f"inline_prev_{new_index}"),
+                            types.InlineKeyboardButton("▶️", callback_data=f"inline_next_{new_index}")
+                        )
+                    )
+                
+                self.bot.answer_callback_query(call.id)
+                
+            except Exception as e:
+                logger.error(f"Ошибка в inline callback: {e}")
+                self.bot.answer_callback_query(call.id, "Ошибка!")
+
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
             if message.chat.type != 'private':
@@ -1300,90 +1370,6 @@ _•••••••••••••••_
                     
                 except ValueError:
                     self.bot.reply_to(message, "❌ *Введи число!*", parse_mode='Markdown')
-
-        @self.bot.inline_handler(func=lambda query: True)
-        def inline_query(inline_query):
-            try:
-                user_data = self.users_collection.find_one({"telegram_id": str(inline_query.from_user.id)})
-                if not user_data:
-                    return
-                
-                unique_chibis = self.get_user_unique_chibis(inline_query.from_user.id)
-                if not unique_chibis:
-                    return
-                
-                chibi_name = unique_chibis[0]
-                file_path = self.get_chibi_image_path(chibi_name)
-                
-                if not file_path:
-                    return
-                
-                with open(file_path, 'rb') as photo:
-                    msg_content = types.InputTextMessageContent(
-                        f"🔥 *Коллекция игрока {user_data.get('first_name', 'Игрок')}* \n_Со временем она будет расти. По крайней мере, так задумано…_"
-                    )
-                    
-                    result = types.InlineQueryResultCachedPhoto(
-                        id='1',
-                        photo_file_id=self.bot.send_photo(inline_query.from_user.id, photo).photo[-1].file_id,
-                        title='Показать свою коллекцию',
-                        description=f'Чибиков: {len(unique_chibis)}',
-                        caption=f"🔥 *Коллекция игрока {user_data.get('first_name', 'Игрок')}* \n_Со временем она будет расти. По крайней мере, так задумано…_",
-                        reply_markup=types.InlineKeyboardMarkup().row(
-                            types.InlineKeyboardButton("◀️", callback_data="inline_prev_0"),
-                            types.InlineKeyboardButton("▶️", callback_data="inline_next_0")
-                        )
-                    )
-                    
-                    self.bot.answer_inline_query(inline_query.id, [result])
-                    
-            except Exception as e:
-                logger.error(f"Ошибка в inline: {e}")
-
-        @self.bot.callback_query_handler(func=lambda call: call.data.startswith('inline_'))
-        def inline_callback_handler(call):
-            try:
-                if not self.check_message_ownership(call):
-                    return
-
-                current_index = int(call.data.split('_')[-1])
-                unique_chibis = self.get_user_unique_chibis(call.from_user.id)
-                
-                if not unique_chibis:
-                    self.bot.answer_callback_query(call.id, "Коллекция пуста!")
-                    return
-                
-                if call.data.startswith('inline_prev'):
-                    new_index = (current_index - 1) % len(unique_chibis)
-                else:
-                    new_index = (current_index + 1) % len(unique_chibis)
-                
-                chibi_name = unique_chibis[new_index]
-                file_path = self.get_chibi_image_path(chibi_name)
-                
-                if not file_path:
-                    self.bot.answer_callback_query(call.id, "Ошибка загрузки изображения!")
-                    return
-                
-                with open(file_path, 'rb') as photo:
-                    self.bot.edit_message_media(
-                        chat_id=call.message.chat.id,
-                        message_id=call.message.message_id,
-                        media=types.InputMediaPhoto(
-                            photo,
-                            caption=f"🔥 *Коллекция игрока {call.from_user.first_name}* \n_Со временем она будет расти. По крайней мере, так задумано…_"
-                        ),
-                        reply_markup=types.InlineKeyboardMarkup().row(
-                            types.InlineKeyboardButton("◀️", callback_data=f"inline_prev_{new_index}"),
-                            types.InlineKeyboardButton("▶️", callback_data=f"inline_next_{new_index}")
-                        )
-                    )
-                
-                self.bot.answer_callback_query(call.id)
-                
-            except Exception as e:
-                logger.error(f"Ошибка в inline callback: {e}")
-                self.bot.answer_callback_query(call.id, "Ошибка!")
 
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
