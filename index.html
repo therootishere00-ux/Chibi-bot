@@ -156,6 +156,7 @@
             width: 100%;
             height: 100%;
             object-fit: cover;
+            filter: none !important;
         }
 
         .tab-label {
@@ -424,7 +425,7 @@
             height: 100px;
             border-radius: 16px;
             overflow: hidden;
-            margin-bottom: 21px; /* Изменено с 16px на 21px */
+            margin-bottom: 21px;
             background: #2A2B2C;
             display: flex;
             align-items: center;
@@ -594,9 +595,48 @@
         :root {
             --accent-color: #007AFF;
         }
+
+        /* Стили для прелоадера */
+        .preloader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(31, 32, 33, 0.8);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            transition: opacity 0.5s ease, visibility 0.5s ease;
+        }
+
+        .preloader.hidden {
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        .loader {
+            width: 48px;
+            height: 48px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            border-top: 4px solid var(--accent-color, #007AFF);
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
+    <div class="preloader" id="preloader">
+        <div class="loader"></div>
+    </div>
+
     <div class="header">
         <img src="https://i.ibb.co/zTB331HR/image.png" alt="Chibeki" class="logo">
         <div class="header-right">
@@ -615,9 +655,11 @@
             <div class="tab-label">Главная</div>
         </div>
         
-        <div class="footer-tab" onclick="switchTab('friends')">
-            <img src="https://img.icons8.com/?size=100&id=oxOwUZwLhjW3&format=png&color=000000" alt="Друзья">
-            <div class="tab-label">Друзья</div>
+        <div class="footer-tab" onclick="showDevelopmentAlert()">
+            <svg viewBox="0 0 24 24" style="fill: #8E8E93;">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/>
+            </svg>
+            <div class="tab-label">???</div>
         </div>
         
         <div class="footer-tab" onclick="switchTab('profile')">
@@ -666,8 +708,8 @@
                         <img src="https://img.icons8.com/?size=100&id=D9RFWfYE57lW&format=png&color=8E8E93" alt="Статья" style="width: 24px; height: 24px;">
                     </div>
                     <div class="collection-info">
-                        <div class="collection-name">Что такое кости?</div>
-                        <div class="collection-stats">И с чем их едят</div>
+                        <div class="collection-name">Что такое кости и с чем их едят?</div>
+                        <div class="collection-stats">Шикарный и понятный гайд про азартную игру</div>
                     </div>
                 </div>
                 
@@ -676,17 +718,10 @@
                         <img src="https://img.icons8.com/?size=100&id=D9RFWfYE57lW&format=png&color=8E8E93" alt="Статья" style="width: 24px; height: 24px;">
                     </div>
                     <div class="collection-info">
-                        <div class="collection-name">Как получить помощь?</div>
-                        <div class="collection-stats">Помощь от админов</div>
+                        <div class="collection-name">Как обратиться к админам?</div>
+                        <div class="collection-stats">Расскажем как связаться с нами анонимно</div>
                     </div>
                 </div>
-            </div>
-        </div>
-
-        <div class="screen hidden" id="friendsScreen">
-            <div class="development-screen">
-                <img src="https://media.tenor.com/e6PY0FvfOb8AAAAi/utya.gif" alt="Скоро здесь что-то будет" class="development-gif">
-                <div class="development-text">Скоро здесь что-то будет</div>
             </div>
         </div>
 
@@ -826,11 +861,26 @@
             
             tg.BackButton.onClick(goBack);
             
+            // Показываем прелоадер при загрузке
+            showPreloader();
+            
             loadSettings();
             loadUserData();
             setupFooter();
             setupProfile();
             setupEventListeners();
+        }
+
+        function showPreloader() {
+            const preloader = document.getElementById('preloader');
+            preloader.classList.remove('hidden');
+            
+            // Случайное время от 0.8 до 1.3 секунд
+            const randomTime = 800 + Math.random() * 500;
+            
+            setTimeout(() => {
+                preloader.classList.add('hidden');
+            }, randomTime);
         }
 
         function setupFooter() {
@@ -892,7 +942,7 @@
             }
             
             document.querySelectorAll('.footer-tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.footer-tab')[tab === 'home' ? 0 : tab === 'friends' ? 1 : 2].classList.add('active');
+            document.querySelectorAll('.footer-tab')[tab === 'home' ? 0 : tab === 'profile' ? 2 : 1].classList.add('active');
             
             document.querySelectorAll('.screen').forEach(s => s.classList.add('hidden'));
             
@@ -903,12 +953,20 @@
                 document.getElementById('viewToggle').classList.add('hidden');
                 tg.BackButton.hide();
             } else {
-                if (tab === 'home' || tab === 'friends') {
+                if (tab === 'home') {
                     tg.BackButton.hide();
                     document.getElementById('viewToggle').classList.add('hidden');
                     document.getElementById('footer').classList.remove('hidden');
                 }
             }
+        }
+
+        function showDevelopmentAlert() {
+            if (settings.vibration) {
+                tg.HapticFeedback.impactOccurred('light');
+            }
+            
+            tg.showAlert('В разработке. Скоро здесь что-то будет!');
         }
 
         function openCollection(type) {
@@ -1004,13 +1062,13 @@
             
             const articles = {
                 dice: {
-                    title: 'Что такое кости?',
-                    message: 'Подробно расскажем, как работают кости в нашем боте и как на них зарабатывать',
+                    title: 'Что такое кости и с чем их едят?',
+                    message: 'Шикарный и понятный гайд про азартную игру',
                     url: 'https://telegra.ph/Kak-rabotayut-kosti--CHIBIKI-11-10'
                 },
                 help: {
-                    title: 'Как получить помощь?',
-                    message: 'Подробно расскажем, как обратиться к админам за помощью',
+                    title: 'Как обратиться к админам?',
+                    message: 'Расскажем как связаться с нами анонимно',
                     url: 'https://telegra.ph/Kak-svyazatsya-s-adminami-11-11'
                 }
             };
