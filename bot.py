@@ -53,7 +53,8 @@ class ChibiBot:
         self.gift_selections = {}
         self.message_owners = {}
         self.waiting_for_coins = {}
-        
+        self.inline_collections = {}
+            
     def _scan_chibis_folder(self, folder_path):
         if not os.path.exists(folder_path):
             logger.error(f"Папка {folder_path} не найдена!")
@@ -503,6 +504,21 @@ class ChibiBot:
             "all_secret": self.all_secret_chibis,
             "all_prize": self.all_prize_chibis
         }
+
+    def get_user_unique_chibis(self, telegram_id):
+        telegram_id_str = str(telegram_id)
+        user_data = self.users_collection.find_one({"telegram_id": telegram_id_str})
+        if not user_data:
+            return []
+        
+        return sorted(list(set(user_data.get('chibis', []))))
+
+    def get_chibi_image_path(self, chibi_name):
+        for folder in ["chibis/common", "chibis/secret", "chibis/prize"]:
+            file_path = os.path.join(folder, f"{chibi_name.replace(' ', '_')}.png")
+            if os.path.exists(file_path):
+                return file_path
+        return None
 
     def setup_flask_routes(self):
         @self.app.route('/')
@@ -1285,6 +1301,90 @@ _•••••••••••••••_
                 except ValueError:
                     self.bot.reply_to(message, "❌ *Введи число!*", parse_mode='Markdown')
 
+        @self.bot.inline_handler(func=lambda query: True)
+        def inline_query(inline_query):
+            try:
+                user_data = self.users_collection.find_one({"telegram_id": str(inline_query.from_user.id)})
+                if not user_data:
+                    return
+                
+                unique_chibis = self.get_user_unique_chibis(inline_query.from_user.id)
+                if not unique_chibis:
+                    return
+                
+                chibi_name = unique_chibis[0]
+                file_path = self.get_chibi_image_path(chibi_name)
+                
+                if not file_path:
+                    return
+                
+                with open(file_path, 'rb') as photo:
+                    msg_content = types.InputTextMessageContent(
+                        f"🔥 *Коллекция игрока {user_data.get('first_name', 'Игрок')}* \n_Со временем она будет расти. По крайней мере, так задумано…_"
+                    )
+                    
+                    result = types.InlineQueryResultCachedPhoto(
+                        id='1',
+                        photo_file_id=self.bot.send_photo(inline_query.from_user.id, photo).photo[-1].file_id,
+                        title='Показать свою коллекцию',
+                        description=f'Чибиков: {len(unique_chibis)}',
+                        caption=f"🔥 *Коллекция игрока {user_data.get('first_name', 'Игрок')}* \n_Со временем она будет расти. По крайней мере, так задумано…_",
+                        reply_markup=types.InlineKeyboardMarkup().row(
+                            types.InlineKeyboardButton("◀️", callback_data="inline_prev_0"),
+                            types.InlineKeyboardButton("▶️", callback_data="inline_next_0")
+                        )
+                    )
+                    
+                    self.bot.answer_inline_query(inline_query.id, [result])
+                    
+            except Exception as e:
+                logger.error(f"Ошибка в inline: {e}")
+
+        @self.bot.callback_query_handler(func=lambda call: call.data.startswith('inline_'))
+        def inline_callback_handler(call):
+            try:
+                if not self.check_message_ownership(call):
+                    return
+
+                current_index = int(call.data.split('_')[-1])
+                unique_chibis = self.get_user_unique_chibis(call.from_user.id)
+                
+                if not unique_chibis:
+                    self.bot.answer_callback_query(call.id, "Коллекция пуста!")
+                    return
+                
+                if call.data.startswith('inline_prev'):
+                    new_index = (current_index - 1) % len(unique_chibis)
+                else:
+                    new_index = (current_index + 1) % len(unique_chibis)
+                
+                chibi_name = unique_chibis[new_index]
+                file_path = self.get_chibi_image_path(chibi_name)
+                
+                if not file_path:
+                    self.bot.answer_callback_query(call.id, "Ошибка загрузки изображения!")
+                    return
+                
+                with open(file_path, 'rb') as photo:
+                    self.bot.edit_message_media(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        media=types.InputMediaPhoto(
+                            photo,
+                            caption=f"🔥 *Коллекция игрока {call.from_user.first_name}* \n_Со временем она будет расти. По крайней мере, так задумано…_"
+                        ),
+                        reply_markup=types.InlineKeyboardMarkup().row(
+                            types.InlineKeyboardButton("◀️", callback_data=f"inline_prev_{new_index}"),
+                            types.InlineKeyboardButton("▶️", callback_data=f"inline_next_{new_index}")
+                        )
+                    )
+                
+                self.bot.answer_callback_query(call.id)
+                
+            except Exception as e:
+                logger.error(f"Ошибка в inline callback: {e}")
+                self.bot.answer_callback_query(call.id, "Ошибка!")
+
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback_handler(call):
             try:
@@ -1450,9 +1550,6 @@ _•••••••••••••••_
 Страница {current_page}/{total_pages}"""
                     
                     markup = types.InlineKeyboardMarkup()
-                    
-                    btn_view = types.InlineKeyboardButton("👀 Просмотр", web_app=types.WebAppInfo(url="https://therootishere00-ux.github.io/Chibi-bot/"))
-                    markup.add(btn_view)
                     
                     if chibis:
                         for chibi_name, count in chibis:
