@@ -656,9 +656,7 @@
         </div>
         
         <div class="footer-tab" onclick="showDevelopmentAlert()">
-            <svg viewBox="0 0 24 24" style="fill: #8E8E93;">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/>
-            </svg>
+            <img src="https://img.icons8.com/?size=100&id=undefined&format=png&color=000000" alt="???" style="filter: invert(0.6);">
             <div class="tab-label">???</div>
         </div>
         
@@ -966,7 +964,17 @@
                 tg.HapticFeedback.impactOccurred('light');
             }
             
-            tg.showAlert('В разработке. Скоро здесь что-то будет!');
+            tg.showPopup({
+                title: 'В разработке',
+                message: 'Скоро здесь что-то будет…',
+                buttons: [
+                    {
+                        type: 'ok',
+                        text: 'Понятно',
+                        id: 'ok'
+                    }
+                ]
+            });
         }
 
         function openCollection(type) {
