@@ -37,6 +37,11 @@ class ChibiBot:
             self.client = MongoClient(self.mongo_uri)
             self.db = self.client.chibibot
             self.users_collection = self.db.users
+            self.system_collection = self.db.system
+            self.temp_data_collection = self.db.temp_data
+            
+            self.temp_data_collection.create_index("created_at", expireAfterSeconds=3600)
+            
             logger.info("✅ Успешное подключение к MongoDB")
         except Exception as e:
             logger.error(f"❌ Ошибка подключения к MongoDB: {e}")
@@ -48,12 +53,20 @@ class ChibiBot:
         
         self._init_collections()
         self._init_admin_users()
+        self._init_system_data()
         
-        self.used_ids = set()
-        self.gift_selections = {}
-        self.message_owners = {}
-        self.waiting_for_coins = {}
-        
+        self.user_requests = {}
+        self.MAX_REQUESTS_PER_MINUTE = 30
+    
+    def _init_system_data(self):
+        system_data = self.system_collection.find_one({"type": "used_ids"})
+        if not system_data:
+            self.system_collection.insert_one({
+                "type": "used_ids",
+                "ids": [],
+                "created_at": datetime.now()
+            })
+    
     def _scan_chibis_folder(self, folder_path):
         if not os.path.exists(folder_path):
             logger.error(f"Папка {folder_path} не найдена!")
@@ -85,7 +98,27 @@ class ChibiBot:
     def _init_collections(self):
         self.users_collection.create_index("telegram_id", unique=True)
         self.users_collection.create_index("user_id", unique=True)
-            
+        self.users_collection.create_index("last_active")
+        self.temp_data_collection.create_index("telegram_id")
+        
+    def check_rate_limit(self, user_id):
+        now = time.time()
+        user_id_str = str(user_id)
+        
+        if user_id_str not in self.user_requests:
+            self.user_requests[user_id_str] = []
+        
+        self.user_requests[user_id_str] = [
+            req_time for req_time in self.user_requests[user_id_str] 
+            if now - req_time < 60
+        ]
+        
+        if len(self.user_requests[user_id_str]) >= self.MAX_REQUESTS_PER_MINUTE:
+            return False
+        
+        self.user_requests[user_id_str].append(now)
+        return True
+        
     def is_test_user(self, username):
         return username in self.test_users if username else False
         
@@ -214,11 +247,48 @@ class ChibiBot:
             user_id = letter + numbers if position == 0 else numbers + letter
             
             existing = self.users_collection.find_one({"user_id": user_id})
-            if not existing and user_id not in self.used_ids:
-                self.used_ids.add(user_id)
+            system_data = self.system_collection.find_one({"type": "used_ids"})
+            used_ids = system_data.get("ids", []) if system_data else []
+            
+            if not existing and user_id not in used_ids:
+                self.system_collection.update_one(
+                    {"type": "used_ids"},
+                    {"$push": {"ids": user_id}},
+                    upsert=True
+                )
                 return user_id
             attempts += 1
-        return f"U{random.randint(1000, 9999)}"
+        return f"U{random.randint(10000, 99999)}"
+    
+    def get_temp_data(self, key, telegram_id=None):
+        query = {"key": key}
+        if telegram_id:
+            query["telegram_id"] = str(telegram_id)
+        
+        data = self.temp_data_collection.find_one(query)
+        return data.get("value") if data else None
+    
+    def set_temp_data(self, key, value, telegram_id=None, ttl_seconds=3600):
+        document = {
+            "key": key,
+            "value": value,
+            "created_at": datetime.now()
+        }
+        if telegram_id:
+            document["telegram_id"] = str(telegram_id)
+        
+        self.temp_data_collection.update_one(
+            {"key": key, "telegram_id": str(telegram_id) if telegram_id else None},
+            {"$set": document},
+            upsert=True
+        )
+    
+    def delete_temp_data(self, key, telegram_id=None):
+        query = {"key": key}
+        if telegram_id:
+            query["telegram_id"] = str(telegram_id)
+        
+        self.temp_data_collection.delete_one(query)
     
     def get_or_create_user(self, telegram_id, first_name=None, username=None):
         telegram_id_str = str(telegram_id)
@@ -309,27 +379,30 @@ class ChibiBot:
     def get_random_chibi(self, from_pack=False):
         if from_pack and random.random() <= 0.05:
             chibi_folder = "chibis/secret"
+            all_chibis = self.all_secret_chibis
         else:
             chibi_folder = "chibis/common"
+            all_chibis = self.all_common_chibis
         
-        if not os.path.exists(chibi_folder):
-            logger.error(f"Папка {chibi_folder} не найдена!")
+        if not os.path.exists(chibi_folder) or not all_chibis:
+            logger.error(f"Папка {chibi_folder} не найдена или пуста!")
             return None, None, "Common"
         
-        chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
+        chibi_name = random.choice(all_chibis)
+        file_path = os.path.join(chibi_folder, f"{chibi_name.replace(' ', '_')}.png")
         
-        if not chibi_files:
-            logger.error(f"В папке {chibi_folder} нет PNG файлов!")
-            return None, None, "Common"
-        
-        random_file = random.choice(chibi_files)
-        file_path = os.path.join(chibi_folder, random_file)
-        file_name = os.path.splitext(random_file)[0]
-        formatted_name = file_name.replace('_', ' ')
+        if not os.path.exists(file_path):
+            logger.error(f"Файл чибика не найден: {file_path}")
+            chibi_files = [f for f in os.listdir(chibi_folder) if f.lower().endswith('.png')]
+            if not chibi_files:
+                return None, None, "Common"
+            random_file = random.choice(chibi_files)
+            file_path = os.path.join(chibi_folder, random_file)
+            chibi_name = os.path.splitext(random_file)[0].replace('_', ' ')
         
         rarity = "Secret" if from_pack and chibi_folder == "chibis/secret" else "Common"
         
-        return file_path, formatted_name, rarity
+        return file_path, chibi_name, rarity
 
     def get_prize_chibi(self, chibi_name):
         chibi_folder = "chibis/prize"
@@ -338,7 +411,7 @@ class ChibiBot:
             logger.error(f"Папка {chibi_folder} не найдена!")
             return None, None, "Prize"
         
-        file_path = os.path.join(chibi_folder, f"{chibi_name}.png")
+        file_path = os.path.join(chibi_folder, f"{chibi_name.replace(' ', '_')}.png")
         if not os.path.exists(file_path):
             logger.error(f"Призовой чибик {chibi_name} не найден!")
             return None, None, "Prize"
@@ -466,12 +539,12 @@ class ChibiBot:
             return True
             
         telegram_id_str = str(call.from_user.id)
-        message_key = (call.message.chat.id, call.message.message_id)
+        message_key = f"{call.message.chat.id}_{call.message.message_id}"
         
-        if message_key in self.message_owners:
-            if self.message_owners[message_key] != telegram_id_str:
-                self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
-                return False
+        owner = self.get_temp_data(f"message_owner_{message_key}")
+        if owner and owner != telegram_id_str:
+            self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
+            return False
         return True
 
     def get_user_collection_data(self, telegram_id):
@@ -504,10 +577,50 @@ class ChibiBot:
             "all_prize": self.all_prize_chibis
         }
 
+    def send_chibi_photo(self, chat_id, file_path, caption, telegram_id_str):
+        try:
+            if not os.path.exists(file_path):
+                logger.error(f"Файл не найден: {file_path}")
+                sent_message = self.bot.send_message(
+                    chat_id,
+                    f"🌀 *Чибик временно недоступен!*\n{caption}",
+                    parse_mode='Markdown'
+                )
+                self.set_temp_data(f"message_owner_{chat_id}_{sent_message.message_id}", telegram_id_str)
+                return sent_message
+            
+            with open(file_path, 'rb') as photo:
+                sent_message = self.bot.send_photo(
+                    chat_id,
+                    photo,
+                    caption=caption,
+                    parse_mode='Markdown'
+                )
+                self.set_temp_data(f"message_owner_{chat_id}_{sent_message.message_id}", telegram_id_str)
+                return sent_message
+                
+        except Exception as e:
+            logger.error(f"Ошибка отправки фото: {e}")
+            sent_message = self.bot.send_message(
+                chat_id,
+                f"🌀 *Не удалось отправить чибика!*\n{caption}",
+                parse_mode='Markdown'
+            )
+            self.set_temp_data(f"message_owner_{chat_id}_{sent_message.message_id}", telegram_id_str)
+            return sent_message
+
     def setup_flask_routes(self):
         @self.app.route('/')
         def home():
             return "🤖 Чиби-бот работает с MongoDB и мини-приложением!"
+        
+        @self.app.route('/health')
+        def health_check():
+            try:
+                self.client.admin.command('ping')
+                return jsonify({"status": "healthy", "database": "connected"})
+            except Exception as e:
+                return jsonify({"status": "unhealthy", "error": str(e)}), 500
         
         @self.app.route('/get_user_collection', methods=['POST'])
         def get_user_collection():
@@ -537,6 +650,24 @@ class ChibiBot:
                 logger.error(f"Ошибка получения списка чибиков: {e}")
                 return jsonify({"error": "Internal server error"}), 500
 
+        @self.app.route('/stats', methods=['GET'])
+        def get_stats():
+            try:
+                total_users = self.users_collection.count_documents({})
+                active_users = self.users_collection.count_documents({
+                    "last_active": {"$gte": datetime.now() - timedelta(days=1)}
+                })
+                
+                return jsonify({
+                    "total_users": total_users,
+                    "active_users": active_users,
+                    "common_chibis": len(self.all_common_chibis),
+                    "secret_chibis": len(self.all_secret_chibis),
+                    "prize_chibis": len(self.all_prize_chibis)
+                })
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_handler(message):
@@ -544,6 +675,10 @@ class ChibiBot:
                 return
                 
             try:
+                if not self.check_rate_limit(message.from_user.id):
+                    self.bot.reply_to(message, "⚡️ *Слишком много запросов!* Подожди немного.", parse_mode='Markdown')
+                    return
+                    
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time_left(message.from_user.id)
                     sent_message = self.bot.send_message(
@@ -551,7 +686,7 @@ class ChibiBot:
                         f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     return
                     
                 user_data, is_new_user = self.get_or_create_user(
@@ -581,10 +716,10 @@ class ChibiBot:
                     )
                     markup.add(btn_channel)
                     sent_message = self.bot.send_message(message.chat.id, welcome_text, reply_markup=markup, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     sent_message = self.bot.send_message(message.chat.id, BOT_TEXTS['already_started'], parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     
             except Exception as e:
                 logger.error(f"Ошибка в start: {e}")
@@ -593,7 +728,7 @@ class ChibiBot:
                     "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
                     parse_mode='Markdown'
                 )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
 
         @self.bot.message_handler(commands=['dice'])
         def dice_handler(message):
@@ -602,6 +737,10 @@ class ChibiBot:
                 return
                 
             try:
+                if not self.check_rate_limit(message.from_user.id):
+                    self.bot.reply_to(message, "⚡️ *Слишком много запросов!* Подожди немного.", parse_mode='Markdown')
+                    return
+                    
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time_left(message.from_user.id)
                     sent_message = self.bot.send_message(
@@ -609,7 +748,7 @@ class ChibiBot:
                         f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     return
                     
                 if not self.check_user_started(message.from_user.id):
@@ -621,7 +760,7 @@ class ChibiBot:
                     error_text = """🎲 *Неправильный формат!*
 _Попробуй: /dice 100_"""
                     sent_message = self.bot.send_message(message.chat.id, error_text, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     return
 
                 try:
@@ -630,11 +769,15 @@ _Попробуй: /dice 100_"""
                     error_text = """🎲 *Неправильный формат!*
 _Попробуй: /dice 100_"""
                     sent_message = self.bot.send_message(message.chat.id, error_text, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     return
 
                 if bet < 1:
                     self.bot.reply_to(message, "❌ *Ставка должна быть больше 0!*", parse_mode='Markdown')
+                    return
+
+                if bet > 10000:
+                    self.bot.reply_to(message, "❌ *Максимальная ставка - 10,000 коинов!*", parse_mode='Markdown')
                     return
 
                 telegram_id_str = str(message.from_user.id)
@@ -659,8 +802,8 @@ _Попробуй: /dice 100_"""
 
                 time.sleep(2)
 
-                if dice_value in [2, 4, 6]:
-                    win_amount = math.ceil(bet * 1.7)
+                if dice_value in [1, 2, 3]:
+                    win_amount = math.ceil(bet * 1.4)
                     total_coins = new_coins + win_amount
                     
                     self.users_collection.update_one(
@@ -687,7 +830,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     "⛓️‍💥* Что-то пошло не так!*",
                     parse_mode='Markdown'
                 )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
 
         @self.bot.message_handler(commands=['ban'])
         def ban_handler(message):
@@ -776,7 +919,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                             f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                             parse_mode='Markdown'
                         )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                        self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
@@ -791,7 +934,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                 response_text = f"⭐️ Твой айди — `{user_id}`"
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(message.chat.id, response_text, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, response_text, parse_mode='Markdown')
                 
@@ -803,7 +946,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
 
@@ -818,7 +961,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                             f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                             parse_mode='Markdown'
                         )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                        self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
@@ -834,7 +977,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                 balance_text = f"💰 У тебя — *{coins}* коинов!"
                 if message.chat.type == 'private':
                     sent_message = self.bot.send_message(message.chat.id, balance_text, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, balance_text, parse_mode='Markdown')
                 
@@ -846,7 +989,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
 
@@ -861,7 +1004,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                             f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                             parse_mode='Markdown'
                         )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                        self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
@@ -884,10 +1027,10 @@ _Ты проиграл, все честно. Ставку уже не верну
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     reply_msg = self.bot.reply_to(message, mart_text, reply_markup=markup, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, reply_msg.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{reply_msg.message_id}", str(message.from_user.id))
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии лавки: {e}")
@@ -897,7 +1040,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
 
@@ -912,7 +1055,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                             f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                             parse_mode='Markdown'
                         )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                        self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
@@ -930,7 +1073,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                             f"⚡️ *Ты уже залутал чибика в последнее время!* Возвращайся за новеньким-готовеньким через *{time_left}*!",
                             parse_mode='Markdown'
                         )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                        self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, f"⚡️ *Ты уже залутал чибика в последнее время!* Возвращайся за новеньким-готовеньким через *{time_left}*!", parse_mode='Markdown')
                     return
@@ -941,7 +1084,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                 if file_path is None:
                     if message.chat.type == 'private':
                         sent_message = self.bot.send_message(message.chat.id, "🌀 *Чибики сейчас отдыхают!* Загляни позже", parse_mode='Markdown')
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                        self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, "🌀 *Чибики сейчас отдыхают!* Загляни позже", parse_mode='Markdown')
                     return
@@ -965,23 +1108,7 @@ _Ты проиграл, все честно. Ставку уже не верну
 Редкость: {rarity_emoji} {rarity}
 У тебя: {chibi_count}"""
                 
-                with open(file_path, 'rb') as photo:
-                    if message.chat.type == 'private':
-                        sent_message = self.bot.send_photo(
-                            message.chat.id,
-                            photo,
-                            caption=chibi_text,
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
-                    else:
-                        sent_message = self.bot.send_photo(
-                            message.chat.id,
-                            photo,
-                            caption=chibi_text,
-                            parse_mode='Markdown'
-                        )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                self.send_chibi_photo(message.chat.id, file_path, chibi_text, telegram_id_str)
                     
                 logger.info(f"Отправлен чиби: {chibi_name} (Редкость: {rarity})")
                     
@@ -993,7 +1120,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
 
@@ -1008,7 +1135,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                             f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                             parse_mode='Markdown'
                         )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                        self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
@@ -1030,7 +1157,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     
                     if message.chat.type == 'private':
                         sent_message = self.bot.send_message(message.chat.id, text, parse_mode='Markdown')
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                        self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, text, parse_mode='Markdown')
                     return
@@ -1056,10 +1183,10 @@ _Ты проиграл, все честно. Ставку уже не верну
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     reply_msg = self.bot.reply_to(message, task_text, reply_markup=markup, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, reply_msg.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{reply_msg.message_id}", str(message.from_user.id))
                 
             except Exception as e:
                 logger.error(f"Ошибка при генерации задания: {e}")
@@ -1069,7 +1196,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
 
@@ -1084,7 +1211,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                             f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                             parse_mode='Markdown'
                         )
-                        self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                        self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
                     return
@@ -1117,10 +1244,10 @@ _Ты проиграл, все честно. Ставку уже не верну
                         reply_markup=markup,
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     reply_msg = self.bot.reply_to(message, menu_text, reply_markup=markup, parse_mode='Markdown')
-                    self.message_owners[(message.chat.id, reply_msg.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{reply_msg.message_id}", str(message.from_user.id))
                 
             except Exception as e:
                 logger.error(f"Ошибка при открытии меню: {e}")
@@ -1130,7 +1257,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
 
@@ -1148,7 +1275,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     return
                     
                 if not self.check_user_started(message.from_user.id):
@@ -1161,7 +1288,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "🤷‍♂️ *Ты что-то не так ввел, друг!* Попробуй: `/gift 1234Е`",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     return
                 
                 target_user_id = message.text.split()[1].strip()
@@ -1174,7 +1301,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "👻 *Такого друга еще нет!* Проверь ID и попробуй снова",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     return
                 
                 if str(message.from_user.id) in self.users_collection.find_one({"user_id": target_user_id}).get('telegram_id', ''):
@@ -1183,16 +1310,16 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "🐲 *Не-не, самому себе подарки не дарим!* Попробуй найти друзей",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     return
                 
                 telegram_id_str = str(message.from_user.id)
-                self.gift_selections[telegram_id_str] = {
+                self.set_temp_data("gift_selection", {
                     "target_user_id": target_user_id,
                     "target_telegram_id": target_user.get('telegram_id'),
                     "target_name": target_user.get('first_name', 'пользователь'),
                     "is_admin": self.is_test_user(message.from_user.username)
-                }
+                }, telegram_id_str)
                 
                 chibis, current_page, total_pages = self.get_user_chibis_for_gift(message.from_user.id, 1)
                 
@@ -1202,7 +1329,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                         "🎁 *А дарить-то нечего!* Сначала собери коллекцию чибиков",
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                    self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                     return
                 
                 gift_text = f"""✨ *О, да ты у нас щедрый!*
@@ -1233,7 +1360,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                     reply_markup=markup,
                     parse_mode='Markdown'
                 )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
                 
             except Exception as e:
                 logger.error(f"Ошибка при отправке подарка: {e}")
@@ -1242,13 +1369,13 @@ _Ты проиграл, все честно. Ставку уже не верну
                     "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
                     parse_mode='Markdown'
                 )
-                self.message_owners[(message.chat.id, sent_message.message_id)] = str(message.from_user.id)
+                self.set_temp_data(f"message_owner_{message.chat.id}_{sent_message.message_id}", str(message.from_user.id))
 
         @self.bot.message_handler(func=lambda message: True, content_types=['text'])
         def handle_text_messages(message):
             telegram_id_str = str(message.from_user.id)
             
-            if telegram_id_str in self.waiting_for_coins:
+            if self.get_temp_data("waiting_for_coins", telegram_id_str):
                 try:
                     coin_amount = int(message.text)
                     
@@ -1265,7 +1392,7 @@ _Ты проиграл, все честно. Ставку уже не верну
                             self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {user_data.get('coins', 0)}💰", parse_mode='Markdown')
                             return
                     
-                    gift_data = self.gift_selections.get(telegram_id_str, {})
+                    gift_data = self.get_temp_data("gift_selection", telegram_id_str)
                     target_name = gift_data.get("target_name", "пользователь")
                     
                     confirm_text = f"""*✨ Дарим {coin_amount} коинов?*
@@ -1280,7 +1407,7 @@ _•••••••••••••••_
                     markup.add(btn_confirm, btn_cancel)
                     
                     self.bot.reply_to(message, confirm_text, reply_markup=markup, parse_mode='Markdown')
-                    del self.waiting_for_coins[telegram_id_str]
+                    self.delete_temp_data("waiting_for_coins", telegram_id_str)
                     
                 except ValueError:
                     self.bot.reply_to(message, "❌ *Введи число!*", parse_mode='Markdown')
@@ -1339,7 +1466,7 @@ _•••••••••••••••_
                         complete_text,
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                    self.set_temp_data(f"message_owner_{call.message.chat.id}_{sent_message.message_id}", telegram_id_str)
                     
                 elif call.data == "task_cannot_complete":
                     self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
@@ -1365,7 +1492,7 @@ _•••••••••••••••_
                         skip_text,
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                    self.set_temp_data(f"message_owner_{call.message.chat.id}_{sent_message.message_id}", telegram_id_str)
                     
                 elif call.data == "task_skip_confirm":
                     telegram_id_str = str(call.from_user.id)
@@ -1589,14 +1716,12 @@ _•••••••••••••••_
 Редкость: {rarity_emoji} {rarity}
 У тебя: {chibi_count}"""
                             
-                            with open(file_path, 'rb') as photo:
-                                sent_message = self.bot.send_photo(
-                                    call.message.chat.id,
-                                    photo,
-                                    caption=chibi_text,
-                                    parse_mode='Markdown'
-                                )
-                                self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                            self.send_chibi_photo(
+                                call.message.chat.id,
+                                file_path,
+                                chibi_text,
+                                telegram_id_str
+                            )
                     
                     self.bot.answer_callback_query(call.id, f"🎉 Открыто {count} Чиби-пак(ов)!")
                     
@@ -1752,7 +1877,7 @@ _•••••••••••••••_
                         bonus_text,
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                    self.set_temp_data(f"message_owner_{call.message.chat.id}_{sent_message.message_id}", telegram_id_str)
                     
                 elif call.data == "bonus_cooldown":
                     telegram_id_str = str(call.from_user.id)
@@ -1792,7 +1917,7 @@ _•••••••••••••••_
                     page = int(call.data.split("_")[2])
                     telegram_id_str = str(call.from_user.id)
                     
-                    if telegram_id_str not in self.gift_selections:
+                    if not self.get_temp_data("gift_selection", telegram_id_str):
                         self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
@@ -1831,7 +1956,7 @@ _•••••••••••••••_
                 elif call.data == "gift_coins":
                     telegram_id_str = str(call.from_user.id)
                     
-                    if telegram_id_str not in self.gift_selections:
+                    if not self.get_temp_data("gift_selection", telegram_id_str):
                         self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
@@ -1850,17 +1975,17 @@ _Ответь на сообщение числом коинов, сколько 
                         parse_mode='Markdown'
                     )
                     
-                    self.waiting_for_coins[telegram_id_str] = True
+                    self.set_temp_data("waiting_for_coins", True, telegram_id_str)
                     
                 elif call.data.startswith("gift_confirm_coins_"):
                     coin_amount = int(call.data.split("_")[3])
                     telegram_id_str = str(call.from_user.id)
                     
-                    if telegram_id_str not in self.gift_selections:
+                    gift_data = self.get_temp_data("gift_selection", telegram_id_str)
+                    if not gift_data:
                         self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
-                    gift_data = self.gift_selections[telegram_id_str]
                     target_telegram_id = gift_data["target_telegram_id"]
                     target_name = gift_data["target_name"]
                     is_admin = gift_data["is_admin"]
@@ -1900,7 +2025,7 @@ _Ответь на сообщение числом коинов, сколько 
                         sender_text,
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                    self.set_temp_data(f"message_owner_{call.message.chat.id}_{sent_message.message_id}", telegram_id_str)
 
                     receiver_text = f"""*💌 Тебе подарок!*
 {sender_name} подарил тебе {coin_amount} коинов!"""
@@ -1910,21 +2035,23 @@ _Ответь на сообщение числом коинов, сколько 
                         receiver_text,
                         parse_mode='Markdown'
                     )
-                    self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
+                    self.set_temp_data(f"message_owner_{target_telegram_id}_{sent_message.message_id}", target_telegram_id)
 
-                    del self.gift_selections[telegram_id_str]
+                    self.delete_temp_data("gift_selection", telegram_id_str)
                     
                 elif call.data.startswith("gift_select_"):
                     chibi_name = call.data.replace("gift_select_", "")
                     telegram_id_str = str(call.from_user.id)
                     
-                    if telegram_id_str not in self.gift_selections:
+                    gift_data = self.get_temp_data("gift_selection", telegram_id_str)
+                    if not gift_data:
                         self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
-                    self.gift_selections[telegram_id_str]["chibi_name"] = chibi_name
+                    gift_data["chibi_name"] = chibi_name
+                    self.set_temp_data("gift_selection", gift_data, telegram_id_str)
                     
-                    target_name = self.gift_selections[telegram_id_str]["target_name"]
+                    target_name = gift_data["target_name"]
                     
                     confirm_text = f"""✨ *Дарим чибика?*
 Ты уверен, что хочешь этого? Назад вернуть уже не получится
@@ -1948,11 +2075,11 @@ _Ответь на сообщение числом коинов, сколько 
                 elif call.data == "gift_confirm":
                     telegram_id_str = str(call.from_user.id)
                     
-                    if telegram_id_str not in self.gift_selections:
+                    gift_data = self.get_temp_data("gift_selection", telegram_id_str)
+                    if not gift_data:
                         self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
-                    gift_data = self.gift_selections[telegram_id_str]
                     chibi_name = gift_data["chibi_name"]
                     target_telegram_id = gift_data["target_telegram_id"]
                     target_name = gift_data["target_name"]
@@ -1998,14 +2125,12 @@ _Кажется, ты выиграл в розыгрыше! Поздравляю
 ♦️*{chibi_name}!* 
 _Спасибо за участие!_"""
                             
-                            with open(prize_file_path, 'rb') as photo:
-                                sent_message = self.bot.send_photo(
-                                    target_telegram_id,
-                                    photo,
-                                    caption=prize_text,
-                                    parse_mode='Markdown'
-                                )
-                                self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
+                            self.send_chibi_photo(
+                                target_telegram_id,
+                                prize_file_path,
+                                prize_text,
+                                target_telegram_id
+                            )
                             
                             sender_text = f"""*✨ Призовой чибик отправлен!*
 {target_name} получил призовой чибик {chibi_name}!"""
@@ -2015,9 +2140,10 @@ _Спасибо за участие!_"""
                                 sender_text,
                                 parse_mode='Markdown'
                             )
-                            self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                            self.set_temp_data(f"message_owner_{call.message.chat.id}_{sent_message.message_id}", telegram_id_str)
                             
                     else:
+
                         sticker_id_sender = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
                         self.bot.send_sticker(call.message.chat.id, sticker_id_sender)
                         
@@ -2030,7 +2156,7 @@ _Спасибо за участие!_"""
                             sender_text,
                             parse_mode='Markdown'
                         )
-                        self.message_owners[(call.message.chat.id, sent_message.message_id)] = telegram_id_str
+                        self.set_temp_data(f"message_owner_{call.message.chat.id}_{sent_message.message_id}", telegram_id_str)
                         
                         sticker_id_receiver = "CAACAgIAAxkBAAE9OxxpBRLZ5OANTuRD-97sRPdCONwv0AACU0YAAkVlEErI0vjxKMrHnTYE"
                         self.bot.send_sticker(target_telegram_id, sticker_id_receiver)
@@ -2048,18 +2174,15 @@ _Спасибо за участие!_"""
                             reply_markup=markup,
                             parse_mode='Markdown'
                         )
-                        self.message_owners[(target_telegram_id, sent_message.message_id)] = target_telegram_id
+                        self.set_temp_data(f"message_owner_{target_telegram_id}_{sent_message.message_id}", target_telegram_id)
                     
-                    del self.gift_selections[telegram_id_str]
+                    self.delete_temp_data("gift_selection", telegram_id_str)
                     
                 elif call.data == "gift_cancel":
                     telegram_id_str = str(call.from_user.id)
                     
-                    if telegram_id_str in self.gift_selections:
-                        del self.gift_selections[telegram_id_str]
-                    
-                    if telegram_id_str in self.waiting_for_coins:
-                        del self.waiting_for_coins[telegram_id_str]
+                    self.delete_temp_data("gift_selection", telegram_id_str)
+                    self.delete_temp_data("waiting_for_coins", telegram_id_str)
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
@@ -2095,7 +2218,31 @@ _Спасибо за участие!_"""
             flask_thread.start()
             logger.info(f"🚀 Flask сервер запущен на порту {PORT}")
         
+        self.cleanup_old_data()
+        
         self.bot.infinity_polling()
+
+    def cleanup_old_data(self):
+        def cleanup():
+            while True:
+                try:
+                    two_minutes_ago = time.time() - 120
+                    for user_id in list(self.user_requests.keys()):
+                        self.user_requests[user_id] = [
+                            t for t in self.user_requests[user_id] 
+                            if t > two_minutes_ago
+                        ]
+                        if not self.user_requests[user_id]:
+                            del self.user_requests[user_id]
+                    
+                    time.sleep(60)
+                except Exception as e:
+                    logger.error(f"Ошибка в cleanup: {e}")
+                    time.sleep(60)
+        
+        cleanup_thread = threading.Thread(target=cleanup)
+        cleanup_thread.daemon = True
+        cleanup_thread.start()
 
 def get_token():
     return os.getenv('BOT_TOKEN')
