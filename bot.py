@@ -238,10 +238,6 @@ class ChibiBot:
                 return time_left.total_seconds()
         return None
         
-    def check_daily_reward_available(self, user_id):
-        """Проверяет, доступна ли ежедневная награда"""
-        return self.check_bonus_cooldown(user_id) is None
-        
     def generate_unique_user_id(self):
         attempts = 0
         while attempts < 100:
@@ -652,32 +648,6 @@ class ChibiBot:
                 })
             except Exception as e:
                 logger.error(f"Ошибка получения списка чибиков: {e}")
-                return jsonify({"error": "Internal server error"}), 500
-
-        @self.app.route('/check_daily_reward', methods=['POST'])
-        def check_daily_reward():
-            """Проверяет доступность ежедневной награды для пользователя"""
-            try:
-                data = request.get_json()
-                telegram_id = data.get('telegram_id')
-                
-                if not telegram_id:
-                    return jsonify({"error": "Telegram ID required"}), 400
-                
-                user_data = self.users_collection.find_one({"telegram_id": str(telegram_id)})
-                if not user_data:
-                    return jsonify({"available": False, "error": "User not found"})
-                
-                # Проверяем доступность награды
-                available = self.check_daily_reward_available(int(telegram_id))
-                
-                return jsonify({
-                    "available": available,
-                    "user_name": user_data.get('first_name', 'Игрок')
-                })
-                
-            except Exception as e:
-                logger.error(f"Ошибка проверки награды: {e}")
                 return jsonify({"error": "Internal server error"}), 500
 
         @self.app.route('/stats', methods=['GET'])
@@ -2280,7 +2250,7 @@ def get_token():
 if __name__ == "__main__":
     token = get_token()
     if not token:
-        print("Токена нема")
+        print("❌ Токен не найден!")
         exit(1)
     
     bot = ChibiBot(token)
