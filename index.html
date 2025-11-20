@@ -30,6 +30,104 @@
             transition: none !important;
         }
 
+        /* Стили для уведомления о награде */
+        .reward-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(10px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .reward-overlay.active {
+            opacity: 1;
+            display: flex;
+        }
+
+        .loading-spinner {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+
+        .loading-spinner.active {
+            display: block;
+        }
+
+        @keyframes spin {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+
+        .reward-notification {
+            width: calc(100% - 30px);
+            max-width: 400px;
+            background: #1e1e1e;
+            border-radius: 21px;
+            padding: 0;
+            color: white;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            border: 1px solid #2a2a2a;
+            overflow: hidden;
+            transform: translateY(100%);
+            transition: transform 0.5s ease;
+        }
+
+        .reward-notification.active {
+            transform: translateY(0);
+        }
+
+        .reward-image {
+            width: 100%;
+            height: 150px;
+            background-image: url('https://i.ibb.co/0jGszh6P/image.png');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+
+        .reward-content {
+            padding: 20px;
+        }
+
+        .reward-title {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: white;
+        }
+
+        .reward-description {
+            font-size: 14px;
+            line-height: 1.4;
+            opacity: 0.7;
+            margin-bottom: 20px;
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .bold-text {
+            font-weight: 700;
+            opacity: 1;
+            color: white;
+        }
+
+        /* Остальные стили остаются без изменений */
         .screen {
             position: absolute;
             top: 0;
@@ -625,16 +723,27 @@
             border-top: 4px solid var(--accent-color, #007AFF);
             animation: spin 1s linear infinite;
         }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
     </style>
 </head>
 <body>
     <div class="preloader" id="preloader">
         <div class="loader"></div>
+    </div>
+
+    <!-- Уведомление о ежедневной награде -->
+    <div class="reward-overlay" id="rewardOverlay">
+        <div class="loading-spinner" id="rewardSpinner"></div>
+        <div class="reward-notification" id="rewardNotification">
+            <div class="reward-image"></div>
+            <div class="reward-content">
+                <h2 class="reward-title">Награда доступна!</h2>
+                <p class="reward-description" id="rewardDescription">
+                    Хей, <span class="bold-text">{имя}</span>, не забудь про <span class="bold-text">ежедневную награду</span>! 
+                    Ее можно забрать до 00:00 по московскому времени, так что не проспи! В любом случае, мое дело предупредить…
+                </p>
+                <div id="rewardButtonContainer"></div>
+            </div>
+        </div>
     </div>
 
     <div class="header">
@@ -867,6 +976,83 @@
             setupFooter();
             setupProfile();
             setupEventListeners();
+            
+            // Проверяем доступность награды после загрузки
+            setTimeout(checkDailyReward, 1500);
+        }
+
+        async function checkDailyReward() {
+            try {
+                const user = tg.initDataUnsafe?.user;
+                if (!user) return;
+
+                const response = await fetch('https://chibi-bot-3d4x.onrender.com/check_daily_reward', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ telegram_id: user.id })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.available) {
+                        showRewardNotification(data.user_name);
+                    }
+                }
+            } catch (error) {
+                console.error('Error checking daily reward:', error);
+            }
+        }
+
+        function showRewardNotification(userName) {
+            const overlay = document.getElementById('rewardOverlay');
+            const spinner = document.getElementById('rewardSpinner');
+            const notification = document.getElementById('rewardNotification');
+            const description = document.getElementById('rewardDescription');
+
+            // Обновляем текст с именем пользователя
+            description.innerHTML = 
+                `Хей, <span class="bold-text">${userName}</span>, не забудь про <span class="bold-text">ежедневную награду</span>! \n` +
+                `Ее можно забрать до 00:00 по московскому времени, так что не проспи! В любом случае, мое дело предупредить…`;
+
+            // Показываем оверлей и спиннер
+            overlay.classList.add('active');
+            spinner.classList.add('active');
+
+            // Через 2 секунды убираем спиннер и показываем плашку
+            setTimeout(() => {
+                spinner.classList.remove('active');
+                notification.classList.add('active');
+                createRewardButton();
+            }, 2000);
+        }
+
+        function createRewardButton() {
+            const buttonContainer = document.getElementById('rewardButtonContainer');
+            buttonContainer.innerHTML = '';
+
+            // Создаем кнопку через Telegram Web App
+            const button = tg.MainButton;
+            button.setText("Понятно");
+            button.show();
+            button.onClick(closeRewardNotification);
+        }
+
+        function closeRewardNotification() {
+            const overlay = document.getElementById('rewardOverlay');
+            const notification = document.getElementById('rewardNotification');
+            const button = tg.MainButton;
+
+            // Убираем плашку
+            notification.classList.remove('active');
+            
+            // Через 0.5 секунды убираем оверлей и кнопку
+            setTimeout(() => {
+                overlay.classList.remove('active');
+                button.hide();
+                button.offClick(closeRewardNotification);
+            }, 500);
         }
 
         function showPreloader() {
