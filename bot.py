@@ -1997,7 +1997,7 @@ _Спасибо за участие!_"""
             thread = threading.Thread(target=run_flask)
             thread.daemon = True
             thread.start()
-            logger.info(f"Flask держится на порту {PORT}")
+            logger.info(f"Flask держится на порту")
         
         self.cleanup()
         
