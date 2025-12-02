@@ -2101,7 +2101,9 @@ _Ответь на сообщение числом коинов, сколько 
                         if file_path:
                             text = f"""*🍀 Эй, {target_name}!* 
 _Кажется, ты выиграл в розыгрыше! Поздравляю. Ты получаешь:_
+
 ♦️*{chibi_name}!* 
+
 _Спасибо за участие!_"""
                             
                             self.send_chibi_photo(
@@ -2114,8 +2116,12 @@ _Спасибо за участие!_"""
                             text2 = f"""*✨ Призовой чибик отправлен!*
 {target_name} получил призовой чибик {chibi_name}!"""
                             
-
-                    self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
+                            sent = self.bot.send_message(
+                                call.message.chat.id,
+                                text2,
+                                parse_mode='Markdown'
+                            )
+                            self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                             
                     else:
                         sticker = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
@@ -2190,7 +2196,7 @@ _Спасибо за участие!_"""
             flask_thread = threading.Thread(target=run_flask)
             flask_thread.daemon = True
             flask_thread.start()
-            logger.info(f"порт  {PORT}")
+            logger.info(f"фласк работает {PORT}")
         
         self.cleanup()
         
@@ -2224,8 +2230,8 @@ def get_token():
 if __name__ == "__main__":
     token = get_token()
     if not token:
-        print("токена нема")
+        print("Токен вставь")
         exit(1)
     
     bot = ChibiBot(token)
-    bot.run()
+    bot.run( )
