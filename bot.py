@@ -565,7 +565,7 @@ class ChibiBot:
     def setup_flask_routes(self):
         @self.app.route('/')
         def home():
-            return "🤖 Чиби-бот работает с MongoDB и мини-приложением!"
+            return "Датабейз здесь"
         
         @self.app.route('/health')
         def health():
@@ -723,11 +723,11 @@ _Попробуй: /dice 100_"""
                     return
 
                 if bet < 1:
-                    self.bot.reply_to(message, "❌ *Ставка должна быть больше 0!*", parse_mode='Markdown')
+                    self.bot.reply_to(message, "💀 *Ставка должна быть больше 0!*", parse_mode='Markdown')
                     return
 
                 if bet > 10000:
-                    self.bot.reply_to(message, "❌ *Максимальная ставка - 10,000 коинов!*", parse_mode='Markdown')
+                    self.bot.reply_to(message, "💀 *Максимальная ставка - 10,000 коинов!*", parse_mode='Markdown')
                     return
 
                 telegram_id_str = str(message.from_user.id)
@@ -738,7 +738,7 @@ _Попробуй: /dice 100_"""
 
                 coins = user.get('coins', 0)
                 if coins < bet:
-                    self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {coins}💰", parse_mode='Markdown')
+                    self.bot.reply_to(message, f"🤷‍♂️ *Недостаточно коинов!* У тебя {coins}💰", parse_mode='Markdown')
                     return
 
                 self.active_bets[telegram_id_str] = bet
@@ -813,7 +813,7 @@ _•••••••••••••••_
                 user = self.users.find_one({"telegram_id": telegram_id_str})
                 
                 if not self.is_test(user.get('username')):
-                    self.bot.reply_to(message, "❌ *Недостаточно прав!*", parse_mode='Markdown')
+                    self.bot.reply_to(message, "🙊 *Недостаточно прав!*", parse_mode='Markdown')
                     return
                     
                 if len(message.text.split()) < 2:
@@ -855,11 +855,11 @@ _•••••••••••••••_
                 user = self.users.find_one({"telegram_id": telegram_id_str})
                 
                 if not self.is_test(user.get('username')):
-                    self.bot.reply_to(message, "❌ *Недостаточно прав!*", parse_mode='Markdown')
+                    self.bot.reply_to(message, "🙊 *Недостаточно прав!*", parse_mode='Markdown')
                     return
                     
                 if len(message.text.split()) < 2:
-                    self.bot.reply_to(message, "🤷‍♂️ *Использование:* `/unban @username`", parse_mode='Markdown')
+                    self.bot.reply_to(message, "🤷‍♂️ *Юзай так:* `/unban @username`", parse_mode='Markdown')
                     return
                     
                 target = message.text.split()[1].strip()
@@ -1969,12 +1969,12 @@ _Ответь на сообщение числом коинов, сколько 
                     
                     user = self.users.find_one({"telegram_id": telegram_id_str})
                     if not user:
-                        self.bot.answer_callback_query(call.id, "❌ *Ошибка!*")
+                        self.bot.answer_callback_query(call.id, "⛓️‍💥 *Ошибка*")
                         return
 
                     if not is_admin:
                         if user.get('coins', 0) < amount:
-                            self.bot.answer_callback_query(call.id, "❌ *Недостаточно коинов!*")
+                            self.bot.answer_callback_query(call.id, "💰 *Недостаточно коинов!*")
                             return
 
                         new_coins_sender = user.get('coins', 0) - amount
@@ -2114,7 +2114,7 @@ _Спасибо за участие!_"""
                             )
                             
                             text2 = f"""*✨ Призовой чибик отправлен!*
-{target_name} получил призовой чибик {chibi_name}!"""
+{target_name} получил свой приз - {chibi_name}!"""
                             
                             sent = self.bot.send_message(
                                 call.message.chat.id,
