@@ -31,7 +31,7 @@ class MongoDB:
         if self.client:
             self.client.close()
 
-# НЕ СМЕЙ ТРОГАТЬ! УБЬЮ НАХЕР
+
 db = MongoDB()
 
 def get_users_collection():
