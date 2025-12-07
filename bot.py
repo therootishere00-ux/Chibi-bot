@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
-        self.test_users = ['ya_admin7']
+        self.test_users = ['ya_admin7','tmkazavr']
         
         if "RENDER" in os.environ:
             self.app = Flask(__name__)
