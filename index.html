@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chibeki</title>
+    <title>чибики ес</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         * {
@@ -504,7 +504,8 @@
     <div id="loadingScreen" class="preloader">
         <img src="https://stickers.fullyst.com/0f72a8b7-c353-5e21-9e25-cbaa1f8b8a68/full/AgAD4SIAAm86EEk.webp" 
              alt="Ракета" 
-             class="rocket-gif">
+             class="rocket-gif"
+             id="loadingGif">
         <div class="loading-wheel"></div>
         <div class="loading-footer">
             Icons by ICONS8<br>
@@ -616,6 +617,7 @@
         let currentViewMode = 3;
         let isInitialLoad = true;
         let tooltipVisible = false;
+        let currentUserGif = '';
 
         function initTelegramApp() {
             tg.ready();
@@ -647,9 +649,9 @@
                 setupUserAvatar();
                 isInitialLoad = false;
             } else if (isInitialLoad) {
+                setupUserAvatar();
                 showPreloader();
                 loadUserData();
-                setupUserAvatar();
                 isInitialLoad = false;
             } else {
                 document.getElementById('loadingScreen').classList.add('hidden');
@@ -660,11 +662,14 @@
 
         function showPreloader() {
             const loadingScreen = document.getElementById('loadingScreen');
+            const loadingGif = document.getElementById('loadingGif');
+            
+            loadingGif.src = currentUserGif;
             loadingScreen.classList.remove('hidden');
             
             setTimeout(() => {
                 loadingScreen.classList.add('hidden');
-            }, Math.floor(Math.random() * 501) + 1500);
+            }, Math.floor(Math.random() * 1001) + 2500);
         }
 
         function setupUserAvatar() {
@@ -682,11 +687,16 @@
                 }
                 
                 const username = user.username || '';
+                
                 if (username.toLowerCase() === 'temkazavr') {
-                    gifElement.src = 'https://stickers.fullyst.com/e7e72911-670d-5946-93e4-3a32dfc3bdbd/full/AgADpWUAAhchkEo.webp';
+                    currentUserGif = 'https://stickers.fullyst.com/e7e72911-670d-5946-93e4-3a32dfc3bdbd/full/AgADpWUAAhchkEo.webp';
+                } else if (username.toLowerCase() === 'ribapibaa') {
+                    currentUserGif = 'https://telepot.ru/images/stickers_img/652a5ce136.gif';
                 } else {
-                    gifElement.src = 'https://stickers.fullyst.com/0f72a8b7-c353-5e21-9e25-cbaa1f8b8a68/full/AgAD4SIAAm86EEk.webp';
+                    currentUserGif = 'https://stickers.fullyst.com/0f72a8b7-c353-5e21-9e25-cbaa1f8b8a68/full/AgAD4SIAAm86EEk.webp';
                 }
+                
+                gifElement.src = currentUserGif;
                 
                 avatarContainer.addEventListener('click', function(e) {
                     e.stopPropagation();
@@ -699,7 +709,8 @@
                 });
             } else {
                 avatarElement.innerHTML = `<img src="https://img.icons8.com/?size=100&id=83180&format=png&color=000000" alt="User" style="filter: invert(1) opacity(0.7); width:20px;height:20px;">`;
-                gifElement.src = 'https://stickers.fullyst.com/0f72a8b7-c353-5e21-9e25-cbaa1f8b8a68/full/AgAD4SIAAm86EEk.webp';
+                currentUserGif = 'https://stickers.fullyst.com/0f72a8b7-c353-5e21-9e25-cbaa1f8b8a68/full/AgAD4SIAAm86EEk.webp';
+                gifElement.src = currentUserGif;
                 
                 avatarContainer.addEventListener('click', function(e) {
                     e.stopPropagation();
