@@ -2575,7 +2575,7 @@ class ChibiBot:
             self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
             
             if seller.get('telegram_id'):
-                notify_text = f"⚡️ *Твой лот продан!*\n{text}"
+                notify_text = f"*Твой лот продан!*\n{text}"
                 try:
                     self.bot.send_message(
                         seller['telegram_id'],
