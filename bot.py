@@ -2696,7 +2696,7 @@ class ChibiBot:
                     
                     time.sleep(60)
                 except Exception as e:
-                    logger.error(f"Ошибка в cleanup: {e}")
+                    logger.error(f"Ошибка в клинап: {e}")
                     time.sleep(60)
         
         thread = threading.Thread(target=clean)
@@ -2709,7 +2709,7 @@ def get_token():
 if __name__ == "__main__":
     token = get_token()
     if not token:
-        print("Токена нема")
+        print("токена нема")
         exit(1)
     
     bot = ChibiBot(token)
