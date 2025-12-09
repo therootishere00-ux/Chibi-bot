@@ -11,6 +11,7 @@ from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 from flask_cors import CORS
+from bson.objectid import ObjectId
 
 from config import BOT_CONFIG, BOT_TEXTS, BOT_SETTINGS, STICKERS, RARITY_EMOJIS
 
@@ -41,9 +42,9 @@ class ChibiBot:
             
             self.temp.create_index("created_at", expireAfterSeconds=3600)
             self.market.create_index("created_at")
-            logger.info("✅ Успешное подключение к MongoDB")
+            logger.info("Успешное подключение к MongoDB")
         except Exception as e:
-            logger.error(f"❌ Ошибка подключения к MongoDB: {e}")
+            logger.error(f"Ошибка подключения к MongoDB: {e}")
             raise
         
         self.common_chibis = self._scan_chibis("chibis/common")
@@ -92,7 +93,7 @@ class ChibiBot:
                         "infinite_chibis": True
                     }}
                 )
-                logger.info(f"✅ Админ {username} инициализирован")
+                logger.info(f"Админ {username} инициализирован")
 
     def _init_db(self):
         self.users.create_index("telegram_id", unique=True)
@@ -433,7 +434,7 @@ class ChibiBot:
     def task_text(self, task_data, telegram_id):
         telegram_id_str = str(telegram_id)
         has_chibi = self.chibi_count(telegram_id, task_data["chibi"]) > 0
-        btn_text = "✅ Сдать задание (1/1)" if has_chibi else "Сдать задание (0/1)"
+        btn_text = "Сдать задание (1/1)" if has_chibi else "Сдать задание (0/1)"
         
         text = f"""*{task_data['emoji']} {task_data['name']}*
 {task_data['phrase']}
@@ -693,7 +694,7 @@ class ChibiBot:
                 if is_new:
                     welcome = BOT_TEXTS['welcome'].format(name=name)
                     markup = types.InlineKeyboardMarkup()
-                    btn = types.InlineKeyboardButton('📢 Наш тгк', url=BOT_CONFIG['telegram_channel'])
+                    btn = types.InlineKeyboardButton('Наш тгк', url=BOT_CONFIG['telegram_channel'])
                     markup.add(btn)
                     sent = self.bot.send_message(message.chat.id, welcome, reply_markup=markup, parse_mode='Markdown')
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -1258,16 +1259,16 @@ class ChibiBot:
                 text = BOT_TEXTS['menu_text']
                 
                 markup = types.InlineKeyboardMarkup(row_width=2)
-                btn1 = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
+                btn1 = types.InlineKeyboardButton("Склад", callback_data="menu_warehouse")
                 btn2 = types.InlineKeyboardButton("Наш тгк", url=BOT_CONFIG['telegram_channel'])
                 
                 cd = self.check_bonus_cd(message.from_user.id)
                 user = self.users.find_one({"telegram_id": str(message.from_user.id)})
                 if cd and not self.is_test(user.get('username') if user else None):
                     time_left = self.format_time(int(cd))
-                    btn3 = types.InlineKeyboardButton(f"🔒 Приходи через {time_left}", callback_data="bonus_cooldown")
+                    btn3 = types.InlineKeyboardButton(f"Приходи через {time_left}", callback_data="bonus_cooldown")
                 else:
-                    btn3 = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
+                    btn3 = types.InlineKeyboardButton("Ежедневный бонус", callback_data="menu_bonus")
                 
                 markup.add(btn1, btn2)
                 markup.add(btn3)
@@ -1374,7 +1375,7 @@ class ChibiBot:
                 for name, count in chibis:
                     markup.add(types.InlineKeyboardButton(name, callback_data=f"gift_select_{name}"))
                 
-                markup.add(types.InlineKeyboardButton("💰 Подарить коины", callback_data="gift_coins"))
+                markup.add(types.InlineKeyboardButton("Подарить коины", callback_data="gift_coins"))
                 
                 nav = []
                 if total > 1:
@@ -1412,6 +1413,9 @@ class ChibiBot:
             waiting_lot_price = self.get_temp("waiting_lot_price", telegram_id_str)
             
             if waiting_coins:
+                if not message.reply_to_message:
+                    return
+                    
                 try:
                     amount = int(message.text)
                     
@@ -1437,9 +1441,10 @@ class ChibiBot:
                     )
 
                     markup = types.InlineKeyboardMarkup()
-                    btn1 = types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"gift_confirm_coins_{amount}")
-                    btn2 = types.InlineKeyboardButton("🙅‍♂️ Отмена", callback_data="gift_cancel")
-                    markup.add(btn1, btn2)
+                    btn1 = types.InlineKeyboardButton("Подтвердить", callback_data=f"gift_confirm_coins_{amount}")
+                    btn2 = types.InlineKeyboardButton("Отмена", callback_data="gift_cancel")
+                    markup.add(btn1)
+                    markup.add(btn2)
                     
                     try:
                         self.bot.delete_message(message.chat.id, message.message_id)
@@ -1458,6 +1463,9 @@ class ChibiBot:
                     self.bot.reply_to(message, BOT_TEXTS['text_input_error'], parse_mode='Markdown')
             
             elif waiting_lot_price:
+                if not message.reply_to_message:
+                    return
+                    
                 try:
                     price = int(message.text)
                     
@@ -1491,8 +1499,8 @@ class ChibiBot:
                     )
                     
                     markup = types.InlineKeyboardMarkup()
-                    btn1 = types.InlineKeyboardButton("✅ Выставить", callback_data="create_lot_confirm")
-                    btn2 = types.InlineKeyboardButton("🙅‍♂️ Отмена", callback_data="create_lot_cancel")
+                    btn1 = types.InlineKeyboardButton("Выставить", callback_data="create_lot_confirm")
+                    btn2 = types.InlineKeyboardButton("Отмена", callback_data="create_lot_cancel")
                     markup.add(btn1)
                     markup.add(btn2)
                     
@@ -1593,7 +1601,7 @@ class ChibiBot:
                     telegram_id_str = str(call.from_user.id)
                     user = self.users.find_one({"telegram_id": telegram_id_str})
                     if not user or not user.get('current_task'):
-                        self.bot.answer_callback_query(call.id, "🎯 Нет активного задания!")
+                        self.bot.answer_callback_query(call.id, "Нет активного задания!")
                         return
                     
                     task = user['current_task']
@@ -1617,7 +1625,7 @@ class ChibiBot:
                     telegram_id_str = str(call.from_user.id)
                     user = self.users.find_one({"telegram_id": telegram_id_str})
                     if not user or not user.get('current_task'):
-                        self.bot.answer_callback_query(call.id, "🎯 Нет активного задания!")
+                        self.bot.answer_callback_query(call.id, "Нет активного задания!")
                         return
                     
                     task = user['current_task']
@@ -1643,7 +1651,7 @@ class ChibiBot:
                     )
                     
                 elif call.data == "menu_warehouse":
-                    text = """*📦 Перепутье*
+                    text = """*Перепутье*
 Выбери, на какой раздел склада хочешь глянуть"""
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
@@ -1779,7 +1787,7 @@ class ChibiBot:
                     
                     current = user.get('items', {}).get("🧧 Чиби-пак", 0)
                     if current < count:
-                        self.bot.answer_callback_query(call.id, "🎒 *Недостаточно Чиби-паков!*")
+                        self.bot.answer_callback_query(call.id, "Недостаточно Чиби-паков!")
                         return
                     
                     new = current - count
@@ -1811,7 +1819,7 @@ class ChibiBot:
                                 telegram_id_str
                             )
                     
-                    self.bot.answer_callback_query(call.id, f"🎉 Открыто {count} Чиби-пак(ов)!")
+                    self.bot.answer_callback_query(call.id, f"Открыто {count} Чиби-пак(ов)!")
                     
                     items, cur_page, total = self.user_items_page(call.from_user.id, 1)
                     
@@ -1895,7 +1903,7 @@ class ChibiBot:
                         }}
                     )
                     
-                    self.bot.answer_callback_query(call.id, "🎉 Чиби-пак куплен!")
+                    self.bot.answer_callback_query(call.id, "Чиби-пак куплен!")
                     
                     text = BOT_TEXTS['mart_text']
                     
@@ -1970,16 +1978,16 @@ class ChibiBot:
                     text = BOT_TEXTS['menu_text']
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
-                    btn1 = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
+                    btn1 = types.InlineKeyboardButton("Склад", callback_data="menu_warehouse")
                     btn2 = types.InlineKeyboardButton("Наш тгк", url=BOT_CONFIG['telegram_channel'])
                     
                     cd = self.check_bonus_cd(call.from_user.id)
                     user = self.users.find_one({"telegram_id": str(call.from_user.id)})
                     if cd and not self.is_test(user.get('username') if user else None):
                         time_left = self.format_time(int(cd))
-                        btn3 = types.InlineKeyboardButton(f"🔒 Приходи через {time_left}", callback_data="bonus_cooldown")
+                        btn3 = types.InlineKeyboardButton(f"Приходи через {time_left}", callback_data="bonus_cooldown")
                     else:
-                        btn3 = types.InlineKeyboardButton("🎁 Ежедневный бонус", callback_data="menu_bonus")
+                        btn3 = types.InlineKeyboardButton("Ежедневный бонус", callback_data="menu_bonus")
                     
                     markup.add(btn1, btn2)
                     markup.add(btn3)
@@ -1997,7 +2005,7 @@ class ChibiBot:
                     telegram_id_str = str(call.from_user.id)
                     
                     if not self.get_temp("gift_data", telegram_id_str):
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
+                        self.bot.answer_callback_query(call.id, "Сообщение устарело...")
                         return
                     
                     chibis, cur_page, total = self.chibis_for_gift(call.from_user.id, page)
@@ -2009,7 +2017,7 @@ class ChibiBot:
                     for name, count in chibis:
                         markup.add(types.InlineKeyboardButton(name, callback_data=f"gift_select_{name}"))
                     
-                    markup.add(types.InlineKeyboardButton("💰 Подарить коины", callback_data="gift_coins"))
+                    markup.add(types.InlineKeyboardButton("Подарить коины", callback_data="gift_coins"))
                     
                     nav = []
                     if total > 1:
@@ -2034,7 +2042,7 @@ class ChibiBot:
                     telegram_id_str = str(call.from_user.id)
                     
                     if not self.get_temp("gift_data", telegram_id_str):
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
+                        self.bot.answer_callback_query(call.id, "Сообщение устарело...")
                         return
                     
                     text = BOT_TEXTS['gift_coins_input']
@@ -2059,7 +2067,7 @@ class ChibiBot:
                     
                     gift_data = self.get_temp("gift_data", telegram_id_str)
                     if not gift_data:
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
+                        self.bot.answer_callback_query(call.id, "Сообщение устарело...")
                         return
                     
                     target_tg = gift_data["target_tg"]
@@ -2068,12 +2076,12 @@ class ChibiBot:
                     
                     user = self.users.find_one({"telegram_id": telegram_id_str})
                     if not user:
-                        self.bot.answer_callback_query(call.id, "⛓️‍💥 *Ошибка*")
+                        self.bot.answer_callback_query(call.id, "Ошибка")
                         return
 
                     if not is_admin:
                         if user.get('coins', 0) < amount:
-                            self.bot.answer_callback_query(call.id, "💰 *Недостаточно коинов!*")
+                            self.bot.answer_callback_query(call.id, "Недостаточно коинов!")
                             return
 
                         new_coins_sender = user.get('coins', 0) - amount
@@ -2119,7 +2127,7 @@ class ChibiBot:
                     
                     gift_data = self.get_temp("gift_data", telegram_id_str)
                     if not gift_data:
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
+                        self.bot.answer_callback_query(call.id, "Сообщение устарело...")
                         return
                     
                     gift_data["chibi_name"] = chibi_name
@@ -2133,8 +2141,8 @@ class ChibiBot:
                     )
                     
                     markup = types.InlineKeyboardMarkup()
-                    btn1 = types.InlineKeyboardButton("✅ Подтвердить", callback_data="gift_confirm")
-                    btn2 = types.InlineKeyboardButton("🙅‍♂️ Отмена", callback_data="gift_cancel")
+                    btn1 = types.InlineKeyboardButton("Подтвердить", callback_data="gift_confirm")
+                    btn2 = types.InlineKeyboardButton("Отмена", callback_data="gift_cancel")
                     markup.add(btn1)
                     markup.add(btn2)
                     
@@ -2151,7 +2159,7 @@ class ChibiBot:
                     
                     gift_data = self.get_temp("gift_data", telegram_id_str)
                     if not gift_data:
-                        self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
+                        self.bot.answer_callback_query(call.id, "Сообщение устарело...")
                         return
                     
                     chibi_name = gift_data["chibi_name"]
@@ -2161,7 +2169,7 @@ class ChibiBot:
                     
                     user = self.users.find_one({"telegram_id": telegram_id_str})
                     if not user or (chibi_name not in user.get('chibis', []) and not user.get('infinite_chibis')):
-                        self.bot.answer_callback_query(call.id, "🎒 У тебя больше нет этого чибика! :(")
+                        self.bot.answer_callback_query(call.id, "У тебя больше нет этого чибика!")
                         return
                     
                     if not is_admin and not user.get('infinite_chibis'):
@@ -2297,17 +2305,10 @@ class ChibiBot:
                         self.bot.answer_callback_query(call.id, BOT_TEXTS['not_enough_chibi'])
                         return
                     
-                    lot_data = {
-                        "chibi_name": chibi_name,
-                        "seller_id": telegram_id_str,
-                        "message_id": call.message.message_id
-                    }
-                    self.set_temp("creating_lot", lot_data, telegram_id_str)
-                    
                     text = BOT_TEXTS['create_lot_price'].format(chibi_name=chibi_name)
                     
                     markup = types.InlineKeyboardMarkup()
-                    btn = types.InlineKeyboardButton("Отменить", callback_data="create_lot_cancel")
+                    btn = types.InlineKeyboardButton("Отмена", callback_data="create_lot_cancel")
                     markup.add(btn)
                     
                     self.bot.edit_message_text(
@@ -2318,6 +2319,12 @@ class ChibiBot:
                         parse_mode='Markdown'
                     )
                     
+                    self.set_temp("creating_lot", {
+                        "chibi_name": chibi_name,
+                        "seller_id": telegram_id_str,
+                        "message_id": call.message.message_id
+                    }, telegram_id_str)
+                    
                     self.set_temp("waiting_lot_price", True, telegram_id_str)
                     
                 elif call.data == "create_lot_confirm":
@@ -2325,7 +2332,7 @@ class ChibiBot:
                     lot_data = self.get_temp("creating_lot", telegram_id_str)
                     
                     if not lot_data:
-                        self.bot.answer_callback_query(call.id, "⏰ Сессия истекла!")
+                        self.bot.answer_callback_query(call.id, "Сессия истекла!")
                         return
                     
                     if self.chibi_count(call.from_user.id, lot_data["chibi_name"]) == 0:
@@ -2343,11 +2350,7 @@ class ChibiBot:
                         {"$set": {"chibis": new_chibis}}
                     )
                     
-                    from bson.objectid import ObjectId
-                    lot_id = str(ObjectId())
-                    
                     lot = {
-                        "_id": ObjectId(lot_id),
                         "seller_id": telegram_id_str,
                         "seller_name": user.get('first_name', 'Игрок'),
                         "chibi_name": lot_data["chibi_name"],
@@ -2375,7 +2378,7 @@ class ChibiBot:
                     telegram_id_str = str(call.from_user.id)
                     self.del_temp("creating_lot", telegram_id_str)
                     self.del_temp("waiting_lot_price", telegram_id_str)
-                    self.show_hub_page(call.message.chat.id, telegram_id_str, 1)
+                    self.show_hub_page(call.message.chat.id, telegram_id_str, 1, call.message.message_id)
                     
                 elif call.data == "hub_back_from_lot":
                     telegram_id_str = str(call.from_user.id)
@@ -2449,12 +2452,10 @@ class ChibiBot:
             self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
 
     def show_lot_details(self, chat_id, telegram_id_str, lot_id, message_id):
-        from bson.objectid import ObjectId
-        
         try:
             lot = self.market.find_one({"_id": ObjectId(lot_id)})
             if not lot or lot['status'] != 'active':
-                self.bot.answer_callback_query(call.id, "Кажется, лот уже не доступен!")
+                self.bot.answer_callback_query(call.id, "Лот уже не доступен!")
                 return
             
             user = self.users.find_one({"telegram_id": telegram_id_str})
@@ -2469,7 +2470,7 @@ class ChibiBot:
             markup = types.InlineKeyboardMarkup()
             
             if is_owner:
-                btn1 = types.InlineKeyboardButton("🙅‍♂️ Убрать лот", callback_data=f"hub_remove_{lot_id}")
+                btn1 = types.InlineKeyboardButton("Убрать лот", callback_data=f"hub_remove_{lot_id}")
             else:
                 btn1 = types.InlineKeyboardButton(f"Купить (💰{lot['price']})", callback_data=f"hub_buy_{lot_id}")
             
@@ -2492,7 +2493,7 @@ class ChibiBot:
         text = BOT_TEXTS['lot_remove_confirm']
         
         markup = types.InlineKeyboardMarkup()
-        btn1 = types.InlineKeyboardButton("✅ Да, убрать", callback_data=f"hub_confirm_remove_{lot_id}")
+        btn1 = types.InlineKeyboardButton("Да, убрать", callback_data=f"hub_confirm_remove_{lot_id}")
         btn2 = types.InlineKeyboardButton("Назад", callback_data="hub_back_from_remove")
         markup.add(btn1)
         markup.add(btn2)
@@ -2508,12 +2509,10 @@ class ChibiBot:
         )
 
     def buy_lot(self, call, lot_id, telegram_id_str):
-        from bson.objectid import ObjectId
-        
         try:
             lot = self.market.find_one({"_id": ObjectId(lot_id)})
             if not lot or lot['status'] != 'active':
-                self.bot.answer_callback_query(call.id, "Кажется, лот уже не доступен!")
+                self.bot.answer_callback_query(call.id, "Лот уже не доступен!")
                 return
             
             if lot['seller_id'] == telegram_id_str:
@@ -2522,7 +2521,7 @@ class ChibiBot:
             
             buyer = self.users.find_one({"telegram_id": telegram_id_str})
             if not buyer:
-                self.bot.answer_callback_query(call.id, "⛓️‍💥 Ошибка!")
+                self.bot.answer_callback_query(call.id, "Ошибка!")
                 return
             
             if buyer.get('coins', 0) < lot['price']:
@@ -2531,7 +2530,7 @@ class ChibiBot:
             
             seller = self.users.find_one({"telegram_id": lot['seller_id']})
             if not seller:
-                self.bot.answer_callback_query(call.id, "Продавец не найден")
+                self.bot.answer_callback_query(call.id, "Продавец не найден!")
                 return
             
             new_buyer_coins = buyer.get('coins', 0) - lot['price']
@@ -2587,19 +2586,17 @@ class ChibiBot:
                     
         except Exception as e:
             logger.error(f"Ошибка покупки лота: {e}")
-            self.bot.answer_callback_query(call.id, "🤷‍♂️ Ошибка покупки!")
+            self.bot.answer_callback_query(call.id, "Ошибка покупки!")
 
     def remove_lot(self, call, lot_id, telegram_id_str):
-        from bson.objectid import ObjectId
-        
         try:
             lot = self.market.find_one({"_id": ObjectId(lot_id)})
             if not lot or lot['status'] != 'active':
-                self.bot.answer_callback_query(call.id, "🙅‍♂️ Лот уже не доступен!")
+                self.bot.answer_callback_query(call.id, "Лот уже не доступен!")
                 return
             
             if lot['seller_id'] != telegram_id_str:
-                self.bot.answer_callback_query(call.id, "🙅‍♂️ Это не твой лот!")
+                self.bot.answer_callback_query(call.id, "Это не твой лот!")
                 return
             
             user = self.users.find_one({"telegram_id": telegram_id_str})
@@ -2630,7 +2627,7 @@ class ChibiBot:
             
         except Exception as e:
             logger.error(f"Ошибка удаления лота: {e}")
-            self.bot.answer_callback_query(call.id, "🙅‍♂️ Ошибка удаления!")
+            self.bot.answer_callback_query(call.id, "Ошибка удаления!")
 
     def show_create_lot_page(self, chat_id, telegram_id_str, page=1, message_id=None):
         chibis, cur_page, total = self.get_user_market_chibis(telegram_id_str, page, 6)
@@ -2665,7 +2662,7 @@ class ChibiBot:
         )
 
     def run(self):
-        logger.info("ОНО ЖИВОЕ!")
+        logger.info("Бот запущен!")
         self.setup_handlers()
         
         if "RENDER" in os.environ:
@@ -2678,7 +2675,7 @@ class ChibiBot:
             flask_thread = threading.Thread(target=run_flask)
             flask_thread.daemon = True
             flask_thread.start()
-            logger.info(f"фласк работает {PORT}")
+            logger.info(f"Фласк работает на порту {PORT}")
         
         self.cleanup()
         
@@ -2712,7 +2709,7 @@ def get_token():
 if __name__ == "__main__":
     token = get_token()
     if not token:
-        print("Токен вставь")
+        print("Токена нема")
         exit(1)
     
     bot = ChibiBot(token)
