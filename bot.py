@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pymongo import MongoClient
 from flask_cors import CORS
 
-from config import BOT_CONFIG, BOT_TEXTS
+from config import BOT_CONFIG, BOT_TEXTS, BOT_SETTINGS, STICKERS, RARITY_EMOJIS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class ChibiBot:
     def __init__(self, token):
         self.bot = telebot.TeleBot(token)
-        self.test_users = ['ya_admin7','tmkazavr']
+        self.test_users = BOT_SETTINGS['test_users']
         
         if "RENDER" in os.environ:
             self.app = Flask(__name__)
@@ -37,8 +37,10 @@ class ChibiBot:
             self.users = self.db.users
             self.system = self.db.system
             self.temp = self.db.temp
+            self.market = self.db.market
             
             self.temp.create_index("created_at", expireAfterSeconds=3600)
+            self.market.create_index("created_at")
             logger.info("✅ Успешное подключение к MongoDB")
         except Exception as e:
             logger.error(f"❌ Ошибка подключения к MongoDB: {e}")
@@ -53,7 +55,7 @@ class ChibiBot:
         self._init_system()
         
         self.user_reqs = {}
-        self.MAX_REQS_PER_MIN = 30
+        self.MAX_REQS_PER_MIN = BOT_SETTINGS['max_reqs_per_min']
         self.active_bets = {}
 
     def _init_system(self):
@@ -296,7 +298,7 @@ class ChibiBot:
         return self.users.find_one({"telegram_id": str(user_id)}) is not None
 
     def send_start_sug(self, chat_id, message_id=None):
-        text = "⭐️ *Советую сначала запустить бота*"
+        text = BOT_TEXTS['start_suggest']
         markup = types.InlineKeyboardMarkup()
         btn_start = types.InlineKeyboardButton("Запуск", url=f"https://t.me/{self.bot.get_me().username}?start=start")
         markup.add(btn_start)
@@ -334,7 +336,7 @@ class ChibiBot:
         )
 
     def get_random_chibi(self, from_pack=False):
-        if from_pack and random.random() <= 0.05:
+        if from_pack and random.random() <= BOT_SETTINGS['pack_secret_chance']:
             folder = "chibis/secret"
             all_chibis = self.secret_chibis
         else:
@@ -408,7 +410,7 @@ class ChibiBot:
         if chibi_name is None:
             chibi_name = "редкого чибика"
         
-        reward = random.randint(32, 49)
+        reward = random.randint(BOT_SETTINGS['task_min_reward'], BOT_SETTINGS['task_max_reward'])
         emoji = random.choice(emojis)
         name = random.choice(names)
         phrase = random.choice(phrases).format(chibi=chibi_name)
@@ -496,7 +498,7 @@ class ChibiBot:
         
         owner = self.get_temp(f"msg_owner_{msg_key}")
         if owner and owner != telegram_id_str:
-            self.bot.answer_callback_query(call.id, "🙈 *Не твое!*", parse_mode='Markdown')
+            self.bot.answer_callback_query(call.id, BOT_TEXTS['not_yours'], parse_mode='Markdown')
             return False
         return True
 
@@ -536,7 +538,7 @@ class ChibiBot:
                 logger.error(f"Файл не найден: {file_path}")
                 sent = self.bot.send_message(
                     chat_id,
-                    f"🌀 *Чибик временно недоступен!*\n{caption}",
+                    BOT_TEXTS['chibi_photo_unavailable'].format(caption=caption),
                     parse_mode='Markdown'
                 )
                 self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
@@ -556,11 +558,39 @@ class ChibiBot:
             logger.error(f"Ошибка отправки фото: {e}")
             sent = self.bot.send_message(
                 chat_id,
-                f"🌀 *Не удалось отправить чибика!*\n{caption}",
+                BOT_TEXTS['chibi_photo_error'].format(caption=caption),
                 parse_mode='Markdown'
             )
             self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
             return sent
+
+    def get_market_lots(self, page=1, per_page=8):
+        total = self.market.count_documents({"status": "active"})
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+        
+        skip = (page - 1) * per_page
+        lots = list(self.market.find({"status": "active"}).sort("created_at", -1).skip(skip).limit(per_page))
+        
+        return lots, page, total_pages, total
+
+    def get_user_market_chibis(self, telegram_id, page=1, per_page=6):
+        telegram_id_str = str(telegram_id)
+        user = self.users.find_one({"telegram_id": telegram_id_str})
+        if not user:
+            return [], 1, 1
+        
+        chibis = user.get('chibis', [])
+        counts = {}
+        for chibi in chibis:
+            counts[chibi] = counts.get(chibi, 0) + 1
+        
+        sorted_chibis = sorted(
+            [(name, count) for name, count in counts.items()],
+            key=lambda x: (-x[1], x[0])
+        )
+        
+        return self.get_page(sorted_chibis, page, per_page)
 
     def setup_flask_routes(self):
         @self.app.route('/')
@@ -629,14 +659,14 @@ class ChibiBot:
                 
             try:
                 if not self.check_req_limit(message.from_user.id):
-                    self.bot.reply_to(message, "⚡️ *Слишком много запросов!* Подожди немного.", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['rate_limit'], parse_mode='Markdown')
                     return
                     
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
                     sent = self.bot.send_message(
                         message.chat.id,
-                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                        BOT_TEXTS['ban_message'].format(days_left=days_left),
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -654,9 +684,9 @@ class ChibiBot:
                 name = message.from_user.first_name or "путешественник"
                 
                 if is_new:
-                    sticker = "CAACAgIAAxkBAAE9JsNpAzQZv6b4b-KZ3ftL2Sld0kUjDQAC400AAkuWEEosjitzZk8fzDYE"
+                    sticker = STICKERS['welcome']
                 else:
-                    sticker = "CAACAgIAAxkBAAE9JstpAzTQNnpt9KcoUte9P7K3CiHpswACmEQAAk-mEEqVynQKXagSVjYE"
+                    sticker = STICKERS['already_started']
                 
                 self.bot.send_sticker(message.chat.id, sticker)
                 
@@ -675,7 +705,7 @@ class ChibiBot:
                 logger.error(f"Ошибка в start: {e}")
                 sent = self.bot.send_message(
                     message.chat.id,
-                    "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                    BOT_TEXTS['connection_lost'],
                     parse_mode='Markdown'
                 )
                 self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -683,19 +713,19 @@ class ChibiBot:
         @self.bot.message_handler(commands=['dice'])
         def dice_msg(message):
             if message.chat.type != 'private':
-                self.bot.reply_to(message, "🎲 *Игра доступна только в личке!*", parse_mode='Markdown')
+                self.bot.reply_to(message, BOT_TEXTS['gift_not_private'], parse_mode='Markdown')
                 return
                 
             try:
                 if not self.check_req_limit(message.from_user.id):
-                    self.bot.reply_to(message, "⚡️ *Слишком много запросов!* Подожди немного.", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['rate_limit'], parse_mode='Markdown')
                     return
                     
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
                     sent = self.bot.send_message(
                         message.chat.id,
-                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                        BOT_TEXTS['ban_message'].format(days_left=days_left),
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -707,27 +737,23 @@ class ChibiBot:
 
                 parts = message.text.split()
                 if len(parts) < 2:
-                    error = """🎲 *Неправильный формат!*
-_Попробуй: /dice 100_"""
-                    sent = self.bot.send_message(message.chat.id, error, parse_mode='Markdown')
+                    sent = self.bot.send_message(message.chat.id, BOT_TEXTS['dice_format_error'], parse_mode='Markdown')
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
 
                 try:
                     bet = int(parts[1])
                 except ValueError:
-                    error = """🎲 *Неправильный формат!*
-_Попробуй: /dice 100_"""
-                    sent = self.bot.send_message(message.chat.id, error, parse_mode='Markdown')
+                    sent = self.bot.send_message(message.chat.id, BOT_TEXTS['dice_format_error'], parse_mode='Markdown')
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
 
-                if bet < 1:
-                    self.bot.reply_to(message, "💀 *Ставка должна быть больше 0!*", parse_mode='Markdown')
+                if bet < BOT_SETTINGS['min_dice_bet']:
+                    self.bot.reply_to(message, BOT_TEXTS['dice_bet_too_low'], parse_mode='Markdown')
                     return
 
-                if bet > 10000:
-                    self.bot.reply_to(message, "💀 *Максимальная ставка - 10,000 коинов!*", parse_mode='Markdown')
+                if bet > BOT_SETTINGS['max_bet']:
+                    self.bot.reply_to(message, BOT_TEXTS['dice_bet_too_high'], parse_mode='Markdown')
                     return
 
                 telegram_id_str = str(message.from_user.id)
@@ -738,7 +764,7 @@ _Попробуй: /dice 100_"""
 
                 coins = user.get('coins', 0)
                 if coins < bet:
-                    self.bot.reply_to(message, f"🤷‍♂️ *Недостаточно коинов!* У тебя {coins}💰", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['dice_insufficient_coins'].format(coins=coins), parse_mode='Markdown')
                     return
 
                 self.active_bets[telegram_id_str] = bet
@@ -757,19 +783,19 @@ _Попробуй: /dice 100_"""
                         {"$set": {"coins": total}}
                     )
 
-                    win_text = f"""*👽 Черт! {message.from_user.first_name}, тебя сегодня повезло… Забирай свой выигрыш!*
-_Поздравляю, ты обыграл дилера!_
-_•••••••••••••••_
-+ 💰*{win}* коинов
-Всего: *{total}* коинов"""
+                    win_text = BOT_TEXTS['dice_win'].format(
+                        username=message.from_user.first_name,
+                        win=win,
+                        total=total
+                    )
 
                     self.bot.send_message(message.chat.id, win_text, parse_mode='Markdown')
                 else:
-                    lose_text = f"""*👽 Ха-ха! {message.from_user.first_name}, кажется ты слил!*
-_Ты проиграл, все честно. Ставку уже не вернуть_
-_•••••••••••••••_
-- 💰*{bet}* коинов
-Осталось: *{coins - bet}* коинов"""
+                    lose_text = BOT_TEXTS['dice_lose'].format(
+                        username=message.from_user.first_name,
+                        bet=bet,
+                        remaining=coins - bet
+                    )
 
                     new_coins = coins - bet
                     self.users.update_one(
@@ -797,7 +823,7 @@ _•••••••••••••••_
                 
                 sent = self.bot.send_message(
                     message.chat.id,
-                    "⛓️‍💥* Что-то пошло не так!*",
+                    BOT_TEXTS['connection_lost'],
                     parse_mode='Markdown'
                 )
                 self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -813,11 +839,11 @@ _•••••••••••••••_
                 user = self.users.find_one({"telegram_id": telegram_id_str})
                 
                 if not self.is_test(user.get('username')):
-                    self.bot.reply_to(message, "🙊 *Недостаточно прав!*", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['admin_no_permission'], parse_mode='Markdown')
                     return
                     
                 if len(message.text.split()) < 2:
-                    self.bot.reply_to(message, "🤷‍♂️ *Использование:* `/ban @username`", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['ban_usage'], parse_mode='Markdown')
                     return
                     
                 target = message.text.split()[1].strip()
@@ -830,7 +856,7 @@ _•••••••••••••••_
                 })
                 
                 if not target_user:
-                    self.bot.reply_to(message, "👻 *Пользователь не найден!*", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['user_not_found'], parse_mode='Markdown')
                     return
                     
                 ban_until = datetime.now() + timedelta(days=7)
@@ -838,11 +864,11 @@ _•••••••••••••••_
                     {"telegram_id": target_user['telegram_id']},
                     {"$set": {"banned_until": ban_until}}
                 )
-                self.bot.reply_to(message, f"✅ *Пользователь забанен на 7 дней!*", parse_mode='Markdown')
+                self.bot.reply_to(message, BOT_TEXTS['ban_success'], parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка бана: {e}")
-                self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
+                self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['unban'])
         def unban_msg(message):
@@ -855,11 +881,11 @@ _•••••••••••••••_
                 user = self.users.find_one({"telegram_id": telegram_id_str})
                 
                 if not self.is_test(user.get('username')):
-                    self.bot.reply_to(message, "🙊 *Недостаточно прав!*", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['admin_no_permission'], parse_mode='Markdown')
                     return
                     
                 if len(message.text.split()) < 2:
-                    self.bot.reply_to(message, "🤷‍♂️ *Юзай так:* `/unban @username`", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['unban_usage'], parse_mode='Markdown')
                     return
                     
                 target = message.text.split()[1].strip()
@@ -872,18 +898,18 @@ _•••••••••••••••_
                 })
                         
                 if not target_user:
-                    self.bot.reply_to(message, "👻 *Пользователь не найден!*", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['user_not_found'], parse_mode='Markdown')
                     return
                     
                 self.users.update_one(
                     {"telegram_id": target_user['telegram_id']},
                     {"$unset": {"banned_until": ""}}
                 )
-                self.bot.reply_to(message, f"✅ *Пользователь разбанен!*", parse_mode='Markdown')
+                self.bot.reply_to(message, BOT_TEXTS['unban_success'], parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка разбана: {e}")
-                self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
+                self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['myid'])
         def myid_msg(message):
@@ -893,12 +919,12 @@ _•••••••••••••••_
                     if message.chat.type == 'private':
                         sent = self.bot.send_message(
                             message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            BOT_TEXTS['ban_message'].format(days_left=days_left),
                             parse_mode='Markdown'
                         )
                         self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
+                        self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
                     
                 if not self.user_started(message.from_user.id):
@@ -908,7 +934,7 @@ _•••••••••••••••_
                 user, _ = self.get_or_create_user(message.from_user.id)
                 user_id = user['user_id']
                 
-                response = f"⭐️ Твой айди — `{user_id}`"
+                response = BOT_TEXTS['myid_response'].format(user_id=user_id)
                 if message.chat.type == 'private':
                     sent = self.bot.send_message(message.chat.id, response, parse_mode='Markdown')
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -920,12 +946,12 @@ _•••••••••••••••_
                 if message.chat.type == 'private':
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                        BOT_TEXTS['connection_lost'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['balance'])
         def balance_msg(message):
@@ -935,12 +961,12 @@ _•••••••••••••••_
                     if message.chat.type == 'private':
                         sent = self.bot.send_message(
                             message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            BOT_TEXTS['ban_message'].format(days_left=days_left),
                             parse_mode='Markdown'
                         )
                         self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
+                        self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
                     
                 if not self.user_started(message.from_user.id):
@@ -951,7 +977,7 @@ _•••••••••••••••_
                 user = self.users.find_one({"telegram_id": telegram_id_str})
                 coins = user.get('coins', 0) if user else 0
                 
-                text = f"💰 У тебя — *{coins}* коинов!"
+                text = BOT_TEXTS['balance_response'].format(coins=coins)
                 if message.chat.type == 'private':
                     sent = self.bot.send_message(message.chat.id, text, parse_mode='Markdown')
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -963,12 +989,12 @@ _•••••••••••••••_
                 if message.chat.type == 'private':
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                        BOT_TEXTS['connection_lost'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['mart'])
         def mart_msg(message):
@@ -978,20 +1004,19 @@ _•••••••••••••••_
                     if message.chat.type == 'private':
                         sent = self.bot.send_message(
                             message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            BOT_TEXTS['ban_message'].format(days_left=days_left),
                             parse_mode='Markdown'
                         )
                         self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
+                        self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
                     
                 if not self.user_started(message.from_user.id):
                     self.send_start_sug(message.chat.id)
                     return
                     
-                text = """🎏 *Лавка джавы*
-Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!"""
+                text = BOT_TEXTS['mart_text']
                 
                 markup = types.InlineKeyboardMarkup()
                 btn = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
@@ -1014,12 +1039,47 @@ _•••••••••••••••_
                 if message.chat.type == 'private':
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                        BOT_TEXTS['connection_lost'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
+
+        @self.bot.message_handler(commands=['hub'])
+        def hub_msg(message):
+            try:
+                if self.is_banned(message.from_user.id):
+                    days_left = self.get_ban_time(message.from_user.id)
+                    if message.chat.type == 'private':
+                        sent = self.bot.send_message(
+                            message.chat.id,
+                            BOT_TEXTS['ban_message'].format(days_left=days_left),
+                            parse_mode='Markdown'
+                        )
+                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                    else:
+                        self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
+                    return
+                    
+                if not self.user_started(message.from_user.id):
+                    self.send_start_sug(message.chat.id)
+                    return
+                    
+                telegram_id_str = str(message.from_user.id)
+                self.show_hub_page(message.chat.id, telegram_id_str, 1)
+                
+            except Exception as e:
+                logger.error(f"Ошибка при открытии рынка: {e}")
+                if message.chat.type == 'private':
+                    sent = self.bot.send_message(
+                        message.chat.id,
+                        BOT_TEXTS['connection_lost'],
+                        parse_mode='Markdown'
+                    )
+                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                else:
+                    self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['chibi'])
         def chibi_msg(message):
@@ -1029,12 +1089,12 @@ _•••••••••••••••_
                     if message.chat.type == 'private':
                         sent = self.bot.send_message(
                             message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            BOT_TEXTS['ban_message'].format(days_left=days_left),
                             parse_mode='Markdown'
                         )
                         self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
+                        self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
                     
                 if not self.user_started(message.from_user.id):
@@ -1047,12 +1107,12 @@ _•••••••••••••••_
                     if message.chat.type == 'private':
                         sent = self.bot.send_message(
                             message.chat.id,
-                            f"⚡️ *Ты уже залутал чибика в последнее время!* Возвращайся за новеньким-готовеньким через *{time_left}*!",
+                            BOT_TEXTS['chibi_cooldown'].format(time_left=time_left),
                             parse_mode='Markdown'
                         )
                         self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
-                        self.bot.reply_to(message, f"⚡️ *Ты уже залутал чибика в последнее время!* Возвращайся за новеньким-готовеньким через *{time_left}*!", parse_mode='Markdown')
+                        self.bot.reply_to(message, BOT_TEXTS['chibi_cooldown'].format(time_left=time_left), parse_mode='Markdown')
                     return
                     
                 telegram_id_str = str(message.from_user.id)
@@ -1060,10 +1120,10 @@ _•••••••••••••••_
                 
                 if file_path is None:
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(message.chat.id, "🌀 *Чибики сейчас отдыхают!* Загляни позже", parse_mode='Markdown')
+                        sent = self.bot.send_message(message.chat.id, BOT_TEXTS['chibi_unavailable'], parse_mode='Markdown')
                         self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
-                        self.bot.reply_to(message, "🌀 *Чибики сейчас отдыхают!* Загляни позже", parse_mode='Markdown')
+                        self.bot.reply_to(message, BOT_TEXTS['chibi_unavailable'], parse_mode='Markdown')
                     return
                 
                 self.add_chibi(message.from_user.id, chibi_name)
@@ -1074,16 +1134,14 @@ _•••••••••••••••_
                     {"$set": {"last_chibi_time": datetime.now()}}
                 )
                 
-                emoji = "🔷" if rarity == "Common" else "🔶"
-                if rarity == "Prize":
-                    emoji = "♦️"
+                emoji = RARITY_EMOJIS.get(rarity, '🔷')
                 
-                text = f"""*Тебе выпал — {chibi_name}!*
-Надеюсь, он тебе понравился! 
-Приходи еще через *2ч 59м*
-•••••••••••••••••••
-Редкость: {emoji} {rarity}
-У тебя: {count}"""
+                text = BOT_TEXTS['chibi_caption'].format(
+                    chibi_name=chibi_name,
+                    emoji=emoji,
+                    rarity=rarity,
+                    count=count
+                )
                 
                 self.send_chibi_photo(message.chat.id, file_path, text, telegram_id_str)
                     
@@ -1094,12 +1152,12 @@ _•••••••••••••••_
                 if message.chat.type == 'private':
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                        BOT_TEXTS['connection_lost'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['task'])
         def task_msg(message):
@@ -1109,12 +1167,12 @@ _•••••••••••••••_
                     if message.chat.type == 'private':
                         sent = self.bot.send_message(
                             message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            BOT_TEXTS['ban_message'].format(days_left=days_left),
                             parse_mode='Markdown'
                         )
                         self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
+                        self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
                     
                 if not self.user_started(message.from_user.id):
@@ -1128,9 +1186,9 @@ _•••••••••••••••_
                     task_type = user.get('last_task_type', 'completed') if user else 'completed'
                     
                     if task_type == 'completed':
-                        text = f"🎯 *Ты выполнил свой таск недавно. Думаю, стоит взять перерыв! Осталось подождать* *{time_left}*"
+                        text = BOT_TEXTS['task_cooldown_completed'].format(time_left=time_left)
                     else:
-                        text = f"🎯 *Ты пропустил свой таск, поэтому придется ждать дольше*. Приходи через *{time_left}*"
+                        text = BOT_TEXTS['task_cooldown_skipped'].format(time_left=time_left)
                     
                     if message.chat.type == 'private':
                         sent = self.bot.send_message(message.chat.id, text, parse_mode='Markdown')
@@ -1170,12 +1228,12 @@ _•••••••••••••••_
                 if message.chat.type == 'private':
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                        BOT_TEXTS['connection_lost'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['menu'])
         def menu_msg(message):
@@ -1185,27 +1243,27 @@ _•••••••••••••••_
                     if message.chat.type == 'private':
                         sent = self.bot.send_message(
                             message.chat.id,
-                            f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                            BOT_TEXTS['ban_message'].format(days_left=days_left),
                             parse_mode='Markdown'
                         )
                         self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
-                        self.bot.reply_to(message, f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.", parse_mode='Markdown')
+                        self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
                     
                 if not self.user_started(message.from_user.id):
                     self.send_start_sug(message.chat.id)
                     return
                     
-                text = """*✨ Меню* 
-Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались"""
+                text = BOT_TEXTS['menu_text']
                 
                 markup = types.InlineKeyboardMarkup(row_width=2)
                 btn1 = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
                 btn2 = types.InlineKeyboardButton("Наш тгк", url=BOT_CONFIG['telegram_channel'])
                 
                 cd = self.check_bonus_cd(message.from_user.id)
-                if cd:
+                user = self.users.find_one({"telegram_id": str(message.from_user.id)})
+                if cd and not self.is_test(user.get('username') if user else None):
                     time_left = self.format_time(int(cd))
                     btn3 = types.InlineKeyboardButton(f"🔒 Приходи через {time_left}", callback_data="bonus_cooldown")
                 else:
@@ -1231,17 +1289,17 @@ _•••••••••••••••_
                 if message.chat.type == 'private':
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                        BOT_TEXTS['connection_lost'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
-                    self.bot.reply_to(message, "⛓️‍💥* Потеряно соединение!* Попробуй снова!", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
         @self.bot.message_handler(commands=['gift'])
         def gift_msg(message):
             if message.chat.type != 'private':
-                self.bot.reply_to(message, "🙅‍♂️ *Не-не, дружок!* Эта команда доступна только в *личке с ботом*", parse_mode='Markdown')
+                self.bot.reply_to(message, BOT_TEXTS['gift_not_private'], parse_mode='Markdown')
                 return
                 
             try:
@@ -1249,7 +1307,7 @@ _•••••••••••••••_
                     days_left = self.get_ban_time(message.from_user.id)
                     sent = self.bot.send_message(
                         message.chat.id,
-                        f"🤡 *Ты в бане!* Ты снова получишь доступ к боту через *{days_left}* дней.",
+                        BOT_TEXTS['ban_message'].format(days_left=days_left),
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -1262,7 +1320,7 @@ _•••••••••••••••_
                 if len(message.text.split()) < 2:
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "🤷‍♂️ *Ты что-то не так ввел, друг!* Попробуй: `/gift 1234Е`",
+                        BOT_TEXTS['gift_usage'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -1275,7 +1333,7 @@ _•••••••••••••••_
                 if not target:
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "👻 *Такого друга еще нет!* Проверь ID и попробуй снова",
+                        BOT_TEXTS['user_not_found'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -1284,7 +1342,7 @@ _•••••••••••••••_
                 if str(message.from_user.id) in self.users.find_one({"user_id": target_id}).get('telegram_id', ''):
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "🐲 *Не-не, самому себе подарки не дарим!* Попробуй найти друзей",
+                        BOT_TEXTS['gift_self'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -1303,14 +1361,13 @@ _•••••••••••••••_
                 if not chibis:
                     sent = self.bot.send_message(
                         message.chat.id,
-                        "🎁 *А дарить-то нечего!* Сначала собери коллекцию чибиков",
+                        BOT_TEXTS['gift_no_chibis'],
                         parse_mode='Markdown'
                     )
                     self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
                 
-                text = f"""✨ *О, да ты у нас щедрый!*
-Выбери, какого чибика подаришь"""
+                text = BOT_TEXTS['gift_select']
                 
                 markup = types.InlineKeyboardMarkup()
                 
@@ -1342,7 +1399,7 @@ _•••••••••••••••_
                 logger.error(f"Ошибка при отправке подарка: {e}")
                 sent = self.bot.send_message(
                     message.chat.id,
-                    "⛓️‍💥* Потеряно соединение!* Попробуй снова!",
+                    BOT_TEXTS['connection_lost'],
                     parse_mode='Markdown'
                 )
                 self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
@@ -1351,12 +1408,15 @@ _•••••••••••••••_
         def text_msg(message):
             telegram_id_str = str(message.from_user.id)
             
-            if self.get_temp("waiting_coins", telegram_id_str):
+            waiting_coins = self.get_temp("waiting_coins", telegram_id_str)
+            waiting_lot_price = self.get_temp("waiting_lot_price", telegram_id_str)
+            
+            if waiting_coins:
                 try:
                     amount = int(message.text)
                     
                     if amount < 1:
-                        self.bot.reply_to(message, "❌ *Число должно быть положительным!*", parse_mode='Markdown')
+                        self.bot.reply_to(message, BOT_TEXTS['text_positive_error'], parse_mode='Markdown')
                         return
                         
                     user = self.users.find_one({"telegram_id": telegram_id_str})
@@ -1365,17 +1425,16 @@ _•••••••••••••••_
                         
                     if not self.is_test(user.get('username')):
                         if user.get('coins', 0) < amount:
-                            self.bot.reply_to(message, f"❌ *Недостаточно коинов!* У тебя {user.get('coins', 0)}💰", parse_mode='Markdown')
+                            self.bot.reply_to(message, BOT_TEXTS['dice_insufficient_coins'].format(coins=user.get('coins', 0)), parse_mode='Markdown')
                             return
                     
                     gift_data = self.get_temp("gift_data", telegram_id_str)
                     target_name = gift_data.get("target_name", "пользователь")
                     
-                    text = f"""*✨ Дарим {amount} коинов?*
-_Ты уверен, что хочешь этого? Назад вернуть уже не получится_
-_•••••••••••••••_
-Кому: *{target_name}* 
-Сколько: *{amount}*"""
+                    text = BOT_TEXTS['gift_coins_confirm'].format(
+                        amount=amount,
+                        target_name=target_name
+                    )
 
                     markup = types.InlineKeyboardMarkup()
                     btn1 = types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"gift_confirm_coins_{amount}")
@@ -1386,7 +1445,42 @@ _•••••••••••••••_
                     self.del_temp("waiting_coins", telegram_id_str)
                     
                 except ValueError:
-                    self.bot.reply_to(message, "❌ *Введи число!*", parse_mode='Markdown')
+                    self.bot.reply_to(message, BOT_TEXTS['text_input_error'], parse_mode='Markdown')
+            
+            elif waiting_lot_price:
+                try:
+                    price = int(message.text)
+                    
+                    if price < BOT_SETTINGS['min_lot_price']:
+                        self.bot.reply_to(message, BOT_TEXTS['create_lot_price_too_low'], parse_mode='Markdown')
+                        return
+                        
+                    if price > BOT_SETTINGS['max_lot_price']:
+                        self.bot.reply_to(message, BOT_TEXTS['create_lot_price_too_high'], parse_mode='Markdown')
+                        return
+                    
+                    lot_data = self.get_temp("creating_lot", telegram_id_str)
+                    if not lot_data:
+                        return
+                    
+                    lot_data["price"] = price
+                    self.set_temp("creating_lot", lot_data, telegram_id_str)
+                    
+                    text = BOT_TEXTS['create_lot_confirm'].format(
+                        chibi_name=lot_data["chibi_name"],
+                        price=price
+                    )
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    btn1 = types.InlineKeyboardButton("✅ Выставить", callback_data="create_lot_confirm")
+                    btn2 = types.InlineKeyboardButton("🙅‍♂️ Отмена", callback_data="create_lot_cancel")
+                    markup.add(btn1, btn2)
+                    
+                    self.bot.reply_to(message, text, reply_markup=markup, parse_mode='Markdown')
+                    self.del_temp("waiting_lot_price", telegram_id_str)
+                    
+                except ValueError:
+                    self.bot.reply_to(message, BOT_TEXTS['text_input_error'], parse_mode='Markdown')
 
         @self.bot.callback_query_handler(func=lambda call: True)
         def callback(call):
@@ -1398,7 +1492,7 @@ _•••••••••••••••_
                     telegram_id_str = str(call.from_user.id)
                     user = self.users.find_one({"telegram_id": telegram_id_str})
                     if not user or not user.get('current_task'):
-                        self.bot.answer_callback_query(call.id, "🎯 Задание уже выполнено!")
+                        self.bot.answer_callback_query(call.id, BOT_TEXTS['task_already_done'])
                         return
                     
                     task = user['current_task']
@@ -1413,12 +1507,12 @@ _•••••••••••••••_
                                 {"$set": {"chibis": new_chibis}}
                             )
                     else:
-                        self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
+                        self.bot.answer_callback_query(call.id, BOT_TEXTS['task_cannot_complete'])
                         return
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    sticker = "CAACAgIAAxkBAAE9Js9pAzTWs9gLLtl9Gqz_9V_4sbwXqgAC7EYAAjNREEqhVSL_nxyHZTYE"
+                    sticker = STICKERS['task_complete']
                     self.bot.send_sticker(call.message.chat.id, sticker)
                     
                     reward = task["reward"]
@@ -1434,10 +1528,7 @@ _•••••••••••••••_
                     )
                     
                     name = call.from_user.first_name or "путешественник"
-                    text = f"""*Ес! {name}, ты выполнил таск!*
-За это ты получаешь обещанную награду. Даже не буду гадать, сколько ты выбивал нужного чибика
-•••••••••••••••••••
-+ 💰*{reward}* коинов"""
+                    text = BOT_TEXTS['task_complete_success'].format(username=name, reward=reward)
                     
                     sent = self.bot.send_message(
                         call.message.chat.id,
@@ -1447,7 +1538,7 @@ _•••••••••••••••_
                     self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                     
                 elif call.data == "task_cannot_complete":
-                    self.bot.answer_callback_query(call.id, "🤷‍♂️ И что ты собрался сдавать?")
+                    self.bot.answer_callback_query(call.id, BOT_TEXTS['task_cannot_complete'])
                     
                 elif call.data == "task_skip":
                     telegram_id_str = str(call.from_user.id)
@@ -1462,8 +1553,7 @@ _•••••••••••••••_
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    text = """✨*Ты пропустил таск. Жди новый!*
-Осталось 5ч 29м"""
+                    text = BOT_TEXTS['task_skip_done']
                     
                     sent = self.bot.send_message(
                         call.message.chat.id,
@@ -1481,8 +1571,7 @@ _•••••••••••••••_
                     
                     task = user['current_task']
                     
-                    text = f"""{task['emoji']}* Ты точно хочешь пропустить задание?*
-Придется долго ждать следующее, но пропуск бесплатный"""
+                    text = BOT_TEXTS['task_skip_confirm'].format(emoji=task['emoji'])
                     
                     markup = types.InlineKeyboardMarkup()
                     btn1 = types.InlineKeyboardButton("Пропустить", callback_data="task_skip")
@@ -1550,9 +1639,7 @@ _•••••••••••••••_
                     page = int(call.data.split("_")[2])
                     chibis, cur_page, total = self.user_chibis_page(call.from_user.id, page)
                     
-                    text = f"""📦 *Твои чибики*
-Великолепные и неповторимые. Ну, почти…
-Страница {cur_page}/{total}"""
+                    text = BOT_TEXTS['warehouse_chibis_text'].format(page=cur_page, total=total)
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -1589,9 +1676,7 @@ _•••••••••••••••_
                     page = int(call.data.split("_")[2])
                     items, cur_page, total = self.user_items_page(call.from_user.id, page)
                     
-                    text = f"""*📦 Твои предметы* 
-Тут хранятся твои боксы. Других предметов в боте пока и нет…
-Страница {cur_page}/{total}"""
+                    text = BOT_TEXTS['warehouse_items_text'].format(page=cur_page, total=total)
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -1635,8 +1720,7 @@ _•••••••••••••••_
                         
                     count = user.get('items', {}).get("🧧 Чиби-пак", 0)
                     
-                    text = f"""*Ты точно хочешь открыть 🧧 Чиби-пак?*
-Хотя что тебе еще делать с ним? Разве что повесить на стену и любоваться"""
+                    text = BOT_TEXTS['open_pack_confirm']
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     
@@ -1684,15 +1768,14 @@ _•••••••••••••••_
                             self.add_chibi(call.from_user.id, chibi_name)
                             chibi_count = self.chibi_count(call.from_user.id, chibi_name)
                             
-                            emoji = "🔷" if rarity == "Common" else "🔶"
-                            if rarity == "Prize":
-                                emoji = "♦️"
+                            emoji = RARITY_EMOJIS.get(rarity, '🔷')
                             
-                            text = f"""*Тебе выпал — {chibi_name}!*
-Надеюсь, он тебе понравился!
-•••••••••••••••••••
-Редкость: {emoji} {rarity}
-У тебя: {chibi_count}"""
+                            text = BOT_TEXTS['chibi_caption'].format(
+                                chibi_name=chibi_name,
+                                emoji=emoji,
+                                rarity=rarity,
+                                count=chibi_count
+                            )
                             
                             self.send_chibi_photo(
                                 call.message.chat.id,
@@ -1705,9 +1788,7 @@ _•••••••••••••••_
                     
                     items, cur_page, total = self.user_items_page(call.from_user.id, 1)
                     
-                    text = f"""*📦 Твои предметы* 
-Тут хранятся твои боксы. Других предметов в боте пока и нет…
-Страница {cur_page}/{total}"""
+                    text = BOT_TEXTS['warehouse_items_text'].format(page=cur_page, total=total)
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -1744,8 +1825,7 @@ _•••••••••••••••_
                     )
                     
                 elif call.data == "mart_chibi_pack":
-                    text = """🎏 *Хочешь купить этот прекрасный Чиби-пак?*
-Да брось, знаю что так руки и чешутся!"""
+                    text = BOT_TEXTS['buy_pack_confirm']
                     
                     markup = types.InlineKeyboardMarkup()
                     btn1 = types.InlineKeyboardButton("Купить (120)", callback_data="buy_chibi_pack")
@@ -1769,16 +1849,16 @@ _•••••••••••••••_
                     
                     coins = user.get('coins', 0)
                     
-                    if coins < 120:
-                        missing = 120 - coins
-                        self.bot.answer_callback_query(call.id, f"✨ Бро, сначала подкопи! Тебе не хватает {missing} коинов")
+                    if coins < BOT_SETTINGS['chibi_pack_price']:
+                        missing = BOT_SETTINGS['chibi_pack_price'] - coins
+                        self.bot.answer_callback_query(call.id, BOT_TEXTS['buy_pack_insufficient_coins'].format(missing=missing))
                         return
                     
-                    new_coins = coins - 120
+                    new_coins = coins - BOT_SETTINGS['chibi_pack_price']
                     current = user.get('items', {})
                     if "🧧 Чиби-пак" not in current:
                         current["🧧 Чиби-пак"] = 0
-                    current["🧧 Чиби-пак"] += 1
+                    current["🧧 Чиби-паk"] += 1
                     
                     self.users.update_one(
                         {"telegram_id": telegram_id_str},
@@ -1790,8 +1870,7 @@ _•••••••••••••••_
                     
                     self.bot.answer_callback_query(call.id, "🎉 Чиби-пак куплен!")
                     
-                    text = """🎏 *Лавка джавы*
-Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!"""
+                    text = BOT_TEXTS['mart_text']
                     
                     markup = types.InlineKeyboardMarkup()
                     btn = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
@@ -1806,8 +1885,7 @@ _•••••••••••••••_
                     )
                     
                 elif call.data == "mart_back":
-                    text = """🎏 *Лавка джавы*
-Джавы, может, и не отличаются умом, но зато точно знают толк в ценах!"""
+                    text = BOT_TEXTS['mart_text']
                     
                     markup = types.InlineKeyboardMarkup()
                     btn = types.InlineKeyboardButton("🧧 Чиби-пак", callback_data="mart_chibi_pack")
@@ -1830,10 +1908,10 @@ _•••••••••••••••_
                     cd = self.check_bonus_cd(call.from_user.id)
                     if cd and not self.is_test(user.get('username')):
                         time_left = self.format_time(int(cd))
-                        self.bot.answer_callback_query(call.id, f"🔒 Бонус будет доступен через {time_left}")
+                        self.bot.answer_callback_query(call.id, BOT_TEXTS['bonus_cooldown'].format(time_left=time_left))
                         return
                     
-                    bonus = random.randint(7, 19)
+                    bonus = random.randint(BOT_SETTINGS['bonus_min'], BOT_SETTINGS['bonus_max'])
                     
                     new_coins = user.get('coins', 0) + bonus
                     self.users.update_one(
@@ -1845,10 +1923,7 @@ _•••••••••••••••_
                     )
                     
                     name = user.get('first_name', 'путешественник')
-                    text = f"""🎁 *Эй, {name}!*
-Ты только что получил ежедневный бонус! 
-•••••••••••••••••
-+ 💰*{bonus}* коинов"""
+                    text = BOT_TEXTS['bonus_received'].format(username=name, bonus=bonus)
                     
                     sent = self.bot.send_message(
                         call.message.chat.id,
@@ -1862,11 +1937,10 @@ _•••••••••••••••_
                     cd = self.check_bonus_cd(call.from_user.id)
                     if cd:
                         time_left = self.format_time(int(cd))
-                        self.bot.answer_callback_query(call.id, f"🔒 Бонус будет доступен через {time_left}")
+                        self.bot.answer_callback_query(call.id, BOT_TEXTS['bonus_cooldown'].format(time_left=time_left))
                     
                 elif call.data == "menu_back":
-                    text = """*✨ Меню* 
-Здесь ты найдешь все, что нужно, но не имеет команды. Мы постарались"""
+                    text = BOT_TEXTS['menu_text']
                     
                     markup = types.InlineKeyboardMarkup(row_width=2)
                     btn1 = types.InlineKeyboardButton("📦 Склад", callback_data="menu_warehouse")
@@ -1901,8 +1975,7 @@ _•••••••••••••••_
                     
                     chibis, cur_page, total = self.chibis_for_gift(call.from_user.id, page)
                     
-                    text = f"""✨ *О, да ты у нас щедрый!*
-Выбери, какого чибика подаришь"""
+                    text = BOT_TEXTS['gift_select']
                     
                     markup = types.InlineKeyboardMarkup()
                     
@@ -1937,8 +2010,7 @@ _•••••••••••••••_
                         self.bot.answer_callback_query(call.id, "⏰ Сообщение устарело...")
                         return
                     
-                    text = """*✨ О, да ты у нас щедрый!*
-_Ответь на сообщение числом коинов, сколько собрался дарить_"""
+                    text = BOT_TEXTS['gift_coins_input']
                     
                     markup = types.InlineKeyboardMarkup()
                     btn = types.InlineKeyboardButton("Отменить", callback_data="gift_cancel")
@@ -1994,8 +2066,7 @@ _Ответь на сообщение числом коинов, сколько 
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
                     sender_name = call.from_user.first_name or "Отправитель"
-                    text = f"""*✨ Коины отправлены! 
-Надеюсь, {target_name} они пригодятся!*"""
+                    text = BOT_TEXTS['gift_coins_sent'].format(target_name=target_name)
 
                     sent = self.bot.send_message(
                         call.message.chat.id,
@@ -2004,8 +2075,7 @@ _Ответь на сообщение числом коинов, сколько 
                     )
                     self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
 
-                    text2 = f"""*💌 Тебе подарок!*
-{sender_name} подарил тебе {amount} коинов!"""
+                    text2 = BOT_TEXTS['gift_coins_received'].format(sender_name=sender_name, amount=amount)
 
                     sent = self.bot.send_message(
                         target_tg,
@@ -2030,11 +2100,10 @@ _Ответь на сообщение числом коинов, сколько 
                     
                     target_name = gift_data["target_name"]
                     
-                    text = f"""✨ *Дарим чибика?*
-Ты уверен, что хочешь этого? Назад вернуть уже не получится
-•••••••••••••••
-Кому: *{target_name}*
-Кого: *{chibi_name}*"""
+                    text = BOT_TEXTS['gift_chibi_confirm'].format(
+                        target_name=target_name,
+                        chibi_name=chibi_name
+                    )
                     
                     markup = types.InlineKeyboardMarkup()
                     btn1 = types.InlineKeyboardButton("✅ Подтвердить", callback_data="gift_confirm")
@@ -2099,12 +2168,7 @@ _Ответь на сообщение числом коинов, сколько 
                         file_path, _, _ = self.get_prize_chibi(chibi_name)
                         
                         if file_path:
-                            text = f"""*🍀 Эй, {target_name}!* 
-_Кажется, ты выиграл в розыгрыше! Поздравляю. Ты получаешь:_
-
-♦️*{chibi_name}!* 
-
-_Спасибо за участие!_"""
+                            text = BOT_TEXTS['gift_prize_received'].format(target_name=target_name, chibi_name=chibi_name)
                             
                             self.send_chibi_photo(
                                 target_tg,
@@ -2113,8 +2177,7 @@ _Спасибо за участие!_"""
                                 target_tg
                             )
                             
-                            text2 = f"""*✨ Призовой чибик отправлен!*
-{target_name} получил свой приз - {chibi_name}!"""
+                            text2 = BOT_TEXTS['gift_prize_sent'].format(target_name=target_name, chibi_name=chibi_name)
                             
                             sent = self.bot.send_message(
                                 call.message.chat.id,
@@ -2124,12 +2187,11 @@ _Спасибо за участие!_"""
                             self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                             
                     else:
-                        sticker = "CAACAgIAAxkBAAE9JtFpAzTjbRJ884hA4YNjTqPc7Z05lAACQEgAAlZVEUqWc8vDGvLqWTYE"
+                        sticker = STICKERS['gift_sent']
                         self.bot.send_sticker(call.message.chat.id, sticker)
                         
                         sender_name = call.from_user.first_name or "Отправитель"
-                        text = f"""*✨ Чибик отправлен! 
-Надеюсь, {target_name} он понравится!*"""
+                        text = BOT_TEXTS['gift_chibi_sent'].format(target_name=target_name)
                         
                         sent = self.bot.send_message(
                             call.message.chat.id,
@@ -2138,11 +2200,10 @@ _Спасибо за участие!_"""
                         )
                         self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                         
-                        sticker2 = "CAACAgIAAxkBAAE9OxxpBRLZ5OANTuRD-97sRPdCONwv0AACU0YAAkVlEErI0vjxKMrHnTYE"
+                        sticker2 = STICKERS['gift_received']
                         self.bot.send_sticker(target_tg, sticker2)
                         
-                        text2 = f"""*💌 Тебе подарок!*
-{sender_name} подарил тебе {chibi_name}!"""
+                        text2 = BOT_TEXTS['gift_chibi_received'].format(sender_name=sender_name, chibi_name=chibi_name)
                         
                         markup = types.InlineKeyboardMarkup()
                         btn = types.InlineKeyboardButton("Посмотреть", callback_data="warehouse_chibis_1")
@@ -2166,21 +2227,406 @@ _Спасибо за участие!_"""
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
+                elif call.data.startswith("hub_page_"):
+                    page = int(call.data.split("_")[2])
+                    telegram_id_str = str(call.from_user.id)
+                    self.show_hub_page(call.message.chat.id, telegram_id_str, page, call.message.message_id)
+                    
+                elif call.data.startswith("hub_lot_"):
+                    lot_id = call.data.split("_")[2]
+                    telegram_id_str = str(call.from_user.id)
+                    self.show_lot_details(call.message.chat.id, telegram_id_str, lot_id, call.message.message_id)
+                    
+                elif call.data.startswith("hub_buy_"):
+                    lot_id = call.data.split("_")[2]
+                    telegram_id_str = str(call.from_user.id)
+                    self.buy_lot(call, lot_id, telegram_id_str)
+                    
+                elif call.data.startswith("hub_remove_"):
+                    lot_id = call.data.split("_")[2]
+                    telegram_id_str = str(call.from_user.id)
+                    self.show_remove_confirmation(call.message.chat.id, telegram_id_str, lot_id, call.message.message_id)
+                    
+                elif call.data.startswith("hub_confirm_remove_"):
+                    lot_id = call.data.split("_")[3]
+                    telegram_id_str = str(call.from_user.id)
+                    self.remove_lot(call, lot_id, telegram_id_str)
+                    
+                elif call.data == "hub_create":
+                    telegram_id_str = str(call.from_user.id)
+                    self.show_create_lot_page(call.message.chat.id, telegram_id_str, 1, call.message.message_id)
+                    
+                elif call.data.startswith("create_lot_page_"):
+                    page = int(call.data.split("_")[3])
+                    telegram_id_str = str(call.from_user.id)
+                    self.show_create_lot_page(call.message.chat.id, telegram_id_str, page, call.message.message_id)
+                    
+                elif call.data.startswith("create_lot_select_"):
+                    chibi_name = call.data.replace("create_lot_select_", "")
+                    telegram_id_str = str(call.from_user.id)
+                    
+                    if self.chibi_count(call.from_user.id, chibi_name) == 0:
+                        self.bot.answer_callback_query(call.id, BOT_TEXTS['not_enough_chibi'])
+                        return
+                    
+                    lot_data = {
+                        "chibi_name": chibi_name,
+                        "seller_id": telegram_id_str
+                    }
+                    self.set_temp("creating_lot", lot_data, telegram_id_str)
+                    
+                    text = BOT_TEXTS['create_lot_price'].format(chibi_name=chibi_name)
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    btn = types.InlineKeyboardButton("Отменить", callback_data="create_lot_cancel")
+                    markup.add(btn)
+                    
+                    self.bot.edit_message_text(
+                        text,
+                        call.message.chat.id,
+                        call.message.message_id,
+                        reply_markup=markup,
+                        parse_mode='Markdown'
+                    )
+                    
+                    self.set_temp("waiting_lot_price", True, telegram_id_str)
+                    
+                elif call.data == "create_lot_confirm":
+                    telegram_id_str = str(call.from_user.id)
+                    lot_data = self.get_temp("creating_lot", telegram_id_str)
+                    
+                    if not lot_data:
+                        self.bot.answer_callback_query(call.id, "⏰ Сессия истекла!")
+                        return
+                    
+                    if self.chibi_count(call.from_user.id, lot_data["chibi_name"]) == 0:
+                        self.bot.answer_callback_query(call.id, BOT_TEXTS['not_enough_chibi'])
+                        return
+                    
+                    user = self.users.find_one({"telegram_id": telegram_id_str})
+                    
+                    new_chibis = user.get('chibis', []).copy()
+                    if lot_data["chibi_name"] in new_chibis:
+                        new_chibis.remove(lot_data["chibi_name"])
+                    
+                    self.users.update_one(
+                        {"telegram_id": telegram_id_str},
+                        {"$set": {"chibis": new_chibis}}
+                    )
+                    
+                    lot = {
+                        "seller_id": telegram_id_str,
+                        "seller_name": user.get('first_name', 'Игрок'),
+                        "chibi_name": lot_data["chibi_name"],
+                        "price": lot_data["price"],
+                        "created_at": datetime.now(),
+                        "status": "active"
+                    }
+                    
+                    self.market.insert_one(lot)
+                    
+                    self.del_temp("creating_lot", telegram_id_str)
+                    self.bot.answer_callback_query(call.id, BOT_TEXTS['create_lot_success'])
+                    
+                    self.show_hub_page(call.message.chat.id, telegram_id_str, 1)
+                    
+                elif call.data == "create_lot_cancel":
+                    telegram_id_str = str(call.from_user.id)
+                    self.del_temp("creating_lot", telegram_id_str)
+                    self.del_temp("waiting_lot_price", telegram_id_str)
+                    self.show_hub_page(call.message.chat.id, telegram_id_str, 1)
+                    
+                elif call.data == "hub_back_from_lot":
+                    telegram_id_str = str(call.from_user.id)
+                    self.show_hub_page(call.message.chat.id, telegram_id_str, 1, call.message.message_id)
+                    
+                elif call.data == "hub_back_from_remove":
+                    telegram_id_str = str(call.from_user.id)
+                    lot_id = self.get_temp(f"removing_lot_{telegram_id_str}")
+                    if lot_id:
+                        self.show_lot_details(call.message.chat.id, telegram_id_str, lot_id, call.message.message_id)
+                        self.del_temp(f"removing_lot_{telegram_id_str}")
+                    
                 elif call.data == "chibi_click":
                     self.bot.answer_callback_query(call.id)
                     
                 elif call.data == "item_click":
-                    self.bot.answer_callback_query(call.id, "Это использовать нельзя")
+                    self.bot.answer_callback_query(call.id, BOT_TEXTS['item_cannot_use'])
                     
                 elif call.data == "empty":
-                    self.bot.answer_callback_query(call.id, "Пустовато здесь!")
+                    self.bot.answer_callback_query(call.id, BOT_TEXTS['empty'])
                     
                 else:
                     self.bot.answer_callback_query(call.id)
                     
             except Exception as e:
                 logger.error(f"Ошибка в callback: {e}")
-                self.bot.answer_callback_query(call.id, "Не твое!", parse_mode='Markdown')
+                self.bot.answer_callback_query(call.id, BOT_TEXTS['not_yours'], parse_mode='Markdown')
+
+    def show_hub_page(self, chat_id, telegram_id_str, page=1, message_id=None):
+        lots, cur_page, total_pages, total_lots = self.get_market_lots(page)
+        
+        text = BOT_TEXTS['hub_intro'].format(total_lots=total_lots)
+        
+        markup = types.InlineKeyboardMarkup()
+        
+        if not lots:
+            markup.add(types.InlineKeyboardButton(BOT_TEXTS['hub_no_lots'], callback_data="empty"))
+        else:
+            for lot in lots:
+                btn_text = f"{lot['chibi_name']} - 💰{lot['price']}"
+                markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"hub_lot_{str(lot['_id'])}"))
+        
+        markup.add(types.InlineKeyboardButton("Создать лот", callback_data="hub_create"))
+        
+        nav = []
+        if total_pages > 1:
+            nav.append(types.InlineKeyboardButton("◀️", callback_data=f"hub_page_{((cur_page-2) % total_pages) + 1}"))
+        
+        nav.append(types.InlineKeyboardButton(f"{cur_page}/{total_pages}", callback_data="empty"))
+        
+        if total_pages > 1:
+            nav.append(types.InlineKeyboardButton("▶️", callback_data=f"hub_page_{(cur_page % total_pages) + 1}"))
+        
+        markup.row(*nav)
+        
+        if message_id:
+            self.bot.edit_message_text(
+                text,
+                chat_id,
+                message_id,
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+        else:
+            sent = self.bot.send_message(
+                chat_id,
+                text,
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+            self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
+
+    def show_lot_details(self, chat_id, telegram_id_str, lot_id, message_id):
+        from bson.objectid import ObjectId
+        
+        try:
+            lot = self.market.find_one({"_id": ObjectId(lot_id)})
+            if not lot or lot['status'] != 'active':
+                self.bot.answer_callback_query(call.id, "❌ Лот уже не доступен!")
+                return
+            
+            user = self.users.find_one({"telegram_id": telegram_id_str})
+            is_owner = lot['seller_id'] == telegram_id_str
+            
+            text = BOT_TEXTS['hub_lot_details'].format(
+                seller_name=lot['seller_name'],
+                chibi_name=lot['chibi_name'],
+                price=lot['price']
+            )
+            
+            markup = types.InlineKeyboardMarkup()
+            
+            if is_owner:
+                btn1 = types.InlineKeyboardButton("❌ Убрать лот", callback_data=f"hub_remove_{lot_id}")
+            else:
+                btn1 = types.InlineKeyboardButton(f"Купить (💰{lot['price']})", callback_data=f"hub_buy_{lot_id}")
+            
+            btn2 = types.InlineKeyboardButton("Назад", callback_data="hub_back_from_lot")
+            markup.add(btn1, btn2)
+            
+            self.bot.edit_message_text(
+                text,
+                chat_id,
+                message_id,
+                reply_markup=markup,
+                parse_mode='Markdown'
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка показа деталей лота: {e}")
+            self.bot.answer_callback_query(call.id, "❌ Ошибка!")
+
+    def show_remove_confirmation(self, chat_id, telegram_id_str, lot_id, message_id):
+        text = BOT_TEXTS['lot_remove_confirm']
+        
+        markup = types.InlineKeyboardMarkup()
+        btn1 = types.InlineKeyboardButton("✅ Да, убрать", callback_data=f"hub_confirm_remove_{lot_id}")
+        btn2 = types.InlineKeyboardButton("Назад", callback_data="hub_back_from_remove")
+        markup.add(btn1, btn2)
+        
+        self.set_temp(f"removing_lot_{telegram_id_str}", lot_id)
+        
+        self.bot.edit_message_text(
+            text,
+            chat_id,
+            message_id,
+            reply_markup=markup,
+            parse_mode='Markdown'
+        )
+
+    def buy_lot(self, call, lot_id, telegram_id_str):
+        from bson.objectid import ObjectId
+        
+        try:
+            lot = self.market.find_one({"_id": ObjectId(lot_id)})
+            if not lot or lot['status'] != 'active':
+                self.bot.answer_callback_query(call.id, "❌ Лот уже не доступен!")
+                return
+            
+            if lot['seller_id'] == telegram_id_str:
+                self.bot.answer_callback_query(call.id, BOT_TEXTS['cannot_buy_own'])
+                return
+            
+            buyer = self.users.find_one({"telegram_id": telegram_id_str})
+            if not buyer:
+                self.bot.answer_callback_query(call.id, "❌ Ошибка!")
+                return
+            
+            if buyer.get('coins', 0) < lot['price']:
+                self.bot.answer_callback_query(call.id, BOT_TEXTS['not_enough_money'])
+                return
+            
+            seller = self.users.find_one({"telegram_id": lot['seller_id']})
+            if not seller:
+                self.bot.answer_callback_query(call.id, "❌ Продавец не найден!")
+                return
+            
+            new_buyer_coins = buyer.get('coins', 0) - lot['price']
+            new_seller_coins = seller.get('coins', 0) + lot['price']
+            
+            buyer_chibis = buyer.get('chibis', [])
+            buyer_chibis.append(lot['chibi_name'])
+            buyer_times = buyer.get('chibi_timestamps', {})
+            buyer_times[lot['chibi_name']] = datetime.now()
+            
+            self.users.update_one(
+                {"telegram_id": telegram_id_str},
+                {"$set": {
+                    "coins": new_buyer_coins,
+                    "chibis": buyer_chibis,
+                    "chibi_timestamps": buyer_times
+                }}
+            )
+            
+            self.users.update_one(
+                {"telegram_id": lot['seller_id']},
+                {"$set": {"coins": new_seller_coins}}
+            )
+            
+            self.market.update_one(
+                {"_id": ObjectId(lot_id)},
+                {"$set": {"status": "sold"}}
+            )
+            
+            self.bot.delete_message(call.message.chat.id, call.message.message_id)
+            
+            text = BOT_TEXTS['hub_buy_success'].format(
+                buyer_name=buyer.get('first_name', 'Покупатель'),
+                chibi_name=lot['chibi_name'],
+                seller_name=seller.get('first_name', 'Продавец'),
+                price=lot['price']
+            )
+            
+            sent = self.bot.send_message(
+                call.message.chat.id,
+                text,
+                parse_mode='Markdown'
+            )
+            self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
+            
+            if seller.get('telegram_id'):
+                notify_text = f"⚡️ *Твой лот продан!*\n{text}"
+                try:
+                    self.bot.send_message(
+                        seller['telegram_id'],
+                        notify_text,
+                        parse_mode='Markdown'
+                    )
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.error(f"Ошибка покупки лота: {e}")
+            self.bot.answer_callback_query(call.id, "❌ Ошибка покупки!")
+
+    def remove_lot(self, call, lot_id, telegram_id_str):
+        from bson.objectid import ObjectId
+        
+        try:
+            lot = self.market.find_one({"_id": ObjectId(lot_id)})
+            if not lot or lot['status'] != 'active':
+                self.bot.answer_callback_query(call.id, "❌ Лот уже не доступен!")
+                return
+            
+            if lot['seller_id'] != telegram_id_str:
+                self.bot.answer_callback_query(call.id, "❌ Это не твой лот!")
+                return
+            
+            user = self.users.find_one({"telegram_id": telegram_id_str})
+            if user:
+                user_chibis = user.get('chibis', [])
+                user_chibis.append(lot['chibi_name'])
+                user_times = user.get('chibi_timestamps', {})
+                user_times[lot['chibi_name']] = datetime.now()
+                
+                self.users.update_one(
+                    {"telegram_id": telegram_id_str},
+                    {"$set": {
+                        "chibis": user_chibis,
+                        "chibi_timestamps": user_times
+                    }}
+                )
+            
+            self.market.update_one(
+                {"_id": ObjectId(lot_id)},
+                {"$set": {"status": "cancelled"}}
+            )
+            
+            self.bot.delete_message(call.message.chat.id, call.message.message_id)
+            
+            sent = self.bot.send_message(
+                call.message.chat.id,
+                BOT_TEXTS['lot_removed'],
+                parse_mode='Markdown'
+            )
+            self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
+            
+        except Exception as e:
+            logger.error(f"Ошибка удаления лота: {e}")
+            self.bot.answer_callback_query(call.id, "❌ Ошибка удаления!")
+
+    def show_create_lot_page(self, chat_id, telegram_id_str, page=1, message_id=None):
+        chibis, cur_page, total = self.get_user_market_chibis(telegram_id_str, page, 6)
+        
+        text = BOT_TEXTS['create_lot_choose']
+        
+        markup = types.InlineKeyboardMarkup()
+        
+        if not chibis:
+            markup.add(types.InlineKeyboardButton(BOT_TEXTS['empty'], callback_data="empty"))
+        else:
+            for name, count in chibis:
+                markup.add(types.InlineKeyboardButton(f"{name} ({count})", callback_data=f"create_lot_select_{name}"))
+        
+        nav = []
+        if total > 1:
+            nav.append(types.InlineKeyboardButton("◀️", callback_data=f"create_lot_page_{((cur_page-2) % total) + 1}"))
+        
+        nav.append(types.InlineKeyboardButton("Назад", callback_data="create_lot_cancel"))
+        
+        if total > 1:
+            nav.append(types.InlineKeyboardButton("▶️", callback_data=f"create_lot_page_{(cur_page % total) + 1}"))
+        
+        markup.row(*nav)
+        
+        self.bot.edit_message_text(
+            text,
+            chat_id,
+            message_id,
+            reply_markup=markup,
+            parse_mode='Markdown'
+        )
 
     def run(self):
         logger.info("ОНО ЖИВОЕ!")
@@ -2234,4 +2680,4 @@ if __name__ == "__main__":
         exit(1)
     
     bot = ChibiBot(token)
-    bot.run( )
+    bot.run()
