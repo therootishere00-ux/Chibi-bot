@@ -652,6 +652,57 @@ class ChibiBot:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        @self.app.route('/get_coins_rating', methods=['GET'])
+        def get_coins_rating():
+            try:
+                top_users = list(self.users.find(
+                    {"coins": {"$exists": True}}
+                ).sort("coins", -1).limit(15))
+                
+                rating_data = []
+                for user in top_users:
+                    rating_data.append({
+                        "name": user.get('first_name', 'Игрок'),
+                        "username": user.get('username', ''),
+                        "coins": user.get('coins', 0)
+                    })
+                
+                return jsonify(rating_data)
+            except Exception as e:
+                logger.error(f"Ошибка получения рейтинга по коинам: {e}")
+                return jsonify({"error": "Internal server error"}), 500
+
+        @self.app.route('/get_chibis_rating', methods=['GET'])
+        def get_chibis_rating():
+            try:
+                all_users = list(self.users.find({}))
+                
+                user_chibi_counts = []
+                for user in all_users:
+                    if 'chibis' in user:
+                        unique_chibis = len(set(user['chibis'])) if user.get('chibis') else 0
+                        user_chibi_counts.append({
+                            "user": user,
+                            "unique_chibis": unique_chibis,
+                            "total_chibis": len(user.get('chibis', []))
+                        })
+                
+                user_chibi_counts.sort(key=lambda x: x['unique_chibis'], reverse=True)
+                
+                rating_data = []
+                for item in user_chibi_counts[:15]:
+                    user = item['user']
+                    rating_data.append({
+                        "name": user.get('first_name', 'Игрок'),
+                        "username": user.get('username', ''),
+                        "chibis_count": item['unique_chibis']
+                    })
+                
+                return jsonify(rating_data)
+            except Exception as e:
+                logger.error(f"Ошибка получения рейтинга по чибикам: {e}")
+                return jsonify({"error": "Internal server error"}), 500
+
     def setup_handlers(self):
         @self.bot.message_handler(commands=['start'])
         def start_msg(message):
