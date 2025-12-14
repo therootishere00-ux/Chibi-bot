@@ -7,11 +7,13 @@ import logging
 import threading
 import time
 import math
+import queue
 from flask import Flask, request, jsonify
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 from flask_cors import CORS
 from bson.objectid import ObjectId
+from telebot.apihelper import ApiTelegramException
 
 from config import BOT_CONFIG, BOT_TEXTS, BOT_SETTINGS, STICKERS, RARITY_EMOJIS
 
@@ -51,6 +53,12 @@ class ChibiBot:
         self.secret_chibis = self._scan_chibis("chibis/secret")
         self.prize_chibis = self._scan_chibis("chibis/prize")
         
+        self.message_queue = queue.Queue()
+        self.MIN_SEND_INTERVAL = 0.034
+        self.last_send_time = 0
+        self.queue_thread = threading.Thread(target=self._process_queue, daemon=True)
+        self.queue_thread.start()
+        
         self._init_db()
         self._init_admins()
         self._init_system()
@@ -58,6 +66,192 @@ class ChibiBot:
         self.user_reqs = {}
         self.MAX_REQS_PER_MIN = BOT_SETTINGS['max_reqs_per_min']
         self.active_bets = {}
+
+    def _process_queue(self):
+        while True:
+            try:
+                task = self.message_queue.get(timeout=1)
+                task_type = task.get('type')
+                
+                elapsed = time.time() - self.last_send_time
+                if elapsed < self.MIN_SEND_INTERVAL:
+                    time.sleep(self.MIN_SEND_INTERVAL - elapsed)
+                
+                success = False
+                if task_type == 'text':
+                    success = self._send_text_with_retry(
+                        task['chat_id'], 
+                        task['text'], 
+                        task.get('parse_mode', 'Markdown'),
+                        task.get('reply_markup'),
+                        task.get('reply_to_message_id'),
+                        task.get('telegram_id_str')
+                    )
+                elif task_type == 'photo':
+                    success = self._send_photo_with_retry(
+                        task['chat_id'],
+                        task['photo_path'],
+                        task['caption'],
+                        task.get('parse_mode', 'Markdown'),
+                        task.get('telegram_id_str')
+                    )
+                elif task_type == 'sticker':
+                    success = self._send_sticker_with_retry(
+                        task['chat_id'],
+                        task['sticker_id'],
+                        task.get('telegram_id_str')
+                    )
+                
+                if not success:
+                    logger.error(f"Не удалось отправить сообщение в chat_id {task['chat_id']}")
+                
+                self.last_send_time = time.time()
+                self.message_queue.task_done()
+                
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Ошибка в обработчике очереди: {e}")
+                time.sleep(1)
+
+    def _send_text_with_retry(self, chat_id, text, parse_mode, reply_markup, reply_to_message_id, telegram_id_str, max_retries=3):
+        for attempt in range(max_retries):
+            try:
+                if reply_to_message_id:
+                    sent = self.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode=parse_mode,
+                        reply_markup=reply_markup,
+                        reply_to_message_id=reply_to_message_id
+                    )
+                else:
+                    sent = self.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode=parse_mode,
+                        reply_markup=reply_markup
+                    )
+                
+                if telegram_id_str:
+                    self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
+                return True
+                
+            except ApiTelegramException as e:
+                if "Too Many Requests" in str(e) or e.error_code == 429:
+                    wait_time = getattr(e, 'retry_after', 2)
+                    logger.warning(f"Лимит запросов. Ждем {wait_time} сек. Попытка {attempt+1}/{max_retries}")
+                    time.sleep(wait_time)
+                elif "bot was blocked" in str(e) or "Forbidden" in str(e):
+                    logger.info(f"Бот заблокирован пользователем {chat_id}")
+                    return False
+                else:
+                    logger.error(f"Ошибка Telegram API: {e}. Попытка {attempt+1}/{max_retries}")
+                    time.sleep(1)
+            except Exception as e:
+                logger.error(f"Общая ошибка отправки текста: {e}. Попытка {attempt+1}/{max_retries}")
+                time.sleep(1)
+        
+        return False
+
+    def _send_photo_with_retry(self, chat_id, photo_path, caption, parse_mode, telegram_id_str, max_retries=3):
+        if not os.path.exists(photo_path):
+            logger.error(f"Файл не найден: {photo_path}")
+            self.queue_message({
+                'type': 'text',
+                'chat_id': chat_id,
+                'text': BOT_TEXTS['chibi_photo_unavailable'].format(caption=caption),
+                'parse_mode': parse_mode,
+                'telegram_id_str': telegram_id_str
+            })
+            return False
+        
+        for attempt in range(max_retries):
+            try:
+                with open(photo_path, 'rb') as photo:
+                    sent = self.bot.send_photo(
+                        chat_id,
+                        photo,
+                        caption=caption,
+                        parse_mode=parse_mode
+                    )
+                    
+                if telegram_id_str:
+                    self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
+                return True
+                
+            except ApiTelegramException as e:
+                if "Too Many Requests" in str(e) or e.error_code == 429:
+                    wait_time = getattr(e, 'retry_after', 2)
+                    logger.warning(f"Лимит запросов при отправке фото. Ждем {wait_time} сек. Попытка {attempt+1}/{max_retries}")
+                    time.sleep(wait_time)
+                elif "bot was blocked" in str(e) or "Forbidden" in str(e):
+                    logger.info(f"Бот заблокирован пользователем {chat_id}")
+                    return False
+                else:
+                    logger.error(f"Ошибка Telegram API при отправке фото: {e}. Попытка {attempt+1}/{max_retries}")
+                    time.sleep(1)
+            except Exception as e:
+                logger.error(f"Общая ошибка отправки фото: {e}. Попытка {attempt+1}/{max_retries}")
+                time.sleep(1)
+        
+        return False
+
+    def _send_sticker_with_retry(self, chat_id, sticker_id, telegram_id_str, max_retries=3):
+        for attempt in range(max_retries):
+            try:
+                self.bot.send_sticker(chat_id, sticker_id)
+                return True
+            except ApiTelegramException as e:
+                if "Too Many Requests" in str(e) or e.error_code == 429:
+                    wait_time = getattr(e, 'retry_after', 2)
+                    logger.warning(f"Лимит запросов при отправке стикера. Ждем {wait_time} сек. Попытка {attempt+1}/{max_retries}")
+                    time.sleep(wait_time)
+                elif "bot was blocked" in str(e) or "Forbidden" in str(e):
+                    logger.info(f"Бот заблокирован пользователем {chat_id}")
+                    return False
+                else:
+                    logger.error(f"Ошибка Telegram API при отправке стикера: {e}. Попытка {attempt+1}/{max_retries}")
+                    time.sleep(1)
+            except Exception as e:
+                logger.error(f"Общая ошибка отправки стикера: {e}. Попытка {attempt+1}/{max_retries}")
+                time.sleep(1)
+        return False
+
+    def queue_message(self, task):
+        self.message_queue.put(task)
+
+    def safe_send_message(self, chat_id, text, parse_mode='Markdown', reply_markup=None, reply_to_message_id=None, telegram_id_str=None):
+        task = {
+            'type': 'text',
+            'chat_id': chat_id,
+            'text': text,
+            'parse_mode': parse_mode,
+            'reply_markup': reply_markup,
+            'reply_to_message_id': reply_to_message_id,
+            'telegram_id_str': telegram_id_str
+        }
+        self.queue_message(task)
+
+    def safe_send_photo(self, chat_id, photo_path, caption, parse_mode='Markdown', telegram_id_str=None):
+        task = {
+            'type': 'photo',
+            'chat_id': chat_id,
+            'photo_path': photo_path,
+            'caption': caption,
+            'parse_mode': parse_mode,
+            'telegram_id_str': telegram_id_str
+        }
+        self.queue_message(task)
+
+    def safe_send_sticker(self, chat_id, sticker_id, telegram_id_str=None):
+        task = {
+            'type': 'sticker',
+            'chat_id': chat_id,
+            'sticker_id': sticker_id,
+            'telegram_id_str': telegram_id_str
+        }
+        self.queue_message(task)
 
     def _init_system(self):
         if not self.system.find_one({"type": "used_ids"}):
@@ -308,9 +502,9 @@ class ChibiBot:
             try:
                 self.bot.edit_message_text(text, chat_id, message_id, reply_markup=markup, parse_mode='Markdown')
             except:
-                self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+                self.safe_send_message(chat_id, text, reply_markup=markup)
         else:
-            self.bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+            self.safe_send_message(chat_id, text, reply_markup=markup)
 
     def add_chibi(self, telegram_id, chibi_name, rarity="Common"):
         telegram_id_str = str(telegram_id)
@@ -534,36 +728,7 @@ class ChibiBot:
         }
 
     def send_chibi_photo(self, chat_id, file_path, caption, telegram_id_str):
-        try:
-            if not os.path.exists(file_path):
-                logger.error(f"Файл не найден: {file_path}")
-                sent = self.bot.send_message(
-                    chat_id,
-                    BOT_TEXTS['chibi_photo_unavailable'].format(caption=caption),
-                    parse_mode='Markdown'
-                )
-                self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
-                return sent
-            
-            with open(file_path, 'rb') as photo:
-                sent = self.bot.send_photo(
-                    chat_id,
-                    photo,
-                    caption=caption,
-                    parse_mode='Markdown'
-                )
-                self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
-                return sent
-                
-        except Exception as e:
-            logger.error(f"Ошибка отправки фото: {e}")
-            sent = self.bot.send_message(
-                chat_id,
-                BOT_TEXTS['chibi_photo_error'].format(caption=caption),
-                parse_mode='Markdown'
-            )
-            self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
-            return sent
+        self.safe_send_photo(chat_id, file_path, caption, 'Markdown', telegram_id_str)
 
     def get_market_lots(self, page=1, per_page=8):
         total = self.market.count_documents({"status": "active"})
@@ -716,12 +881,11 @@ class ChibiBot:
                     
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['ban_message'].format(days_left=days_left),
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
                     
                 user, is_new = self.get_or_create_user(
@@ -740,27 +904,33 @@ class ChibiBot:
                 else:
                     sticker = STICKERS['already_started']
                 
-                self.bot.send_sticker(message.chat.id, sticker)
+                self.safe_send_sticker(message.chat.id, sticker, str(message.from_user.id))
                 
                 if is_new:
                     welcome = BOT_TEXTS['welcome'].format(name=name)
                     markup = types.InlineKeyboardMarkup()
                     btn = types.InlineKeyboardButton('Наш тгк', url=BOT_CONFIG['telegram_channel'])
                     markup.add(btn)
-                    sent = self.bot.send_message(message.chat.id, welcome, reply_markup=markup, parse_mode='Markdown')
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                    self.safe_send_message(
+                        message.chat.id,
+                        welcome,
+                        reply_markup=markup,
+                        telegram_id_str=str(message.from_user.id)
+                    )
                 else:
-                    sent = self.bot.send_message(message.chat.id, BOT_TEXTS['already_started'], parse_mode='Markdown')
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                    self.safe_send_message(
+                        message.chat.id,
+                        BOT_TEXTS['already_started'],
+                        telegram_id_str=str(message.from_user.id)
+                    )
                     
             except Exception as e:
                 logger.error(f"Ошибка в start: {e}")
-                sent = self.bot.send_message(
+                self.safe_send_message(
                     message.chat.id,
                     BOT_TEXTS['connection_lost'],
-                    parse_mode='Markdown'
+                    telegram_id_str=str(message.from_user.id)
                 )
-                self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
 
         @self.bot.message_handler(commands=['dice'])
         def dice_msg(message):
@@ -775,12 +945,11 @@ class ChibiBot:
                     
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['ban_message'].format(days_left=days_left),
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
                     
                 if not self.user_started(message.from_user.id):
@@ -789,15 +958,21 @@ class ChibiBot:
 
                 parts = message.text.split()
                 if len(parts) < 2:
-                    sent = self.bot.send_message(message.chat.id, BOT_TEXTS['dice_format_error'], parse_mode='Markdown')
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                    self.safe_send_message(
+                        message.chat.id,
+                        BOT_TEXTS['dice_format_error'],
+                        telegram_id_str=str(message.from_user.id)
+                    )
                     return
 
                 try:
                     bet = int(parts[1])
                 except ValueError:
-                    sent = self.bot.send_message(message.chat.id, BOT_TEXTS['dice_format_error'], parse_mode='Markdown')
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                    self.safe_send_message(
+                        message.chat.id,
+                        BOT_TEXTS['dice_format_error'],
+                        telegram_id_str=str(message.from_user.id)
+                    )
                     return
 
                 if bet < BOT_SETTINGS['min_dice_bet']:
@@ -841,7 +1016,7 @@ class ChibiBot:
                         total=total
                     )
 
-                    self.bot.send_message(message.chat.id, win_text, parse_mode='Markdown')
+                    self.safe_send_message(message.chat.id, win_text, telegram_id_str=telegram_id_str)
                 else:
                     lose_text = BOT_TEXTS['dice_lose'].format(
                         username=message.from_user.first_name,
@@ -855,7 +1030,7 @@ class ChibiBot:
                         {"$set": {"coins": new_coins}}
                     )
                     
-                    self.bot.send_message(message.chat.id, lose_text, parse_mode='Markdown')
+                    self.safe_send_message(message.chat.id, lose_text, telegram_id_str=telegram_id_str)
                 
                 del self.active_bets[telegram_id_str]
 
@@ -873,12 +1048,11 @@ class ChibiBot:
                         )
                     del self.active_bets[telegram_id_str]
                 
-                sent = self.bot.send_message(
+                self.safe_send_message(
                     message.chat.id,
                     BOT_TEXTS['connection_lost'],
-                    parse_mode='Markdown'
+                    telegram_id_str=str(message.from_user.id)
                 )
-                self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
 
         @self.bot.message_handler(commands=['ban'])
         def ban_msg(message):
@@ -969,12 +1143,11 @@ class ChibiBot:
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             message.chat.id,
                             BOT_TEXTS['ban_message'].format(days_left=days_left),
-                            parse_mode='Markdown'
+                            telegram_id_str=str(message.from_user.id)
                         )
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
@@ -988,20 +1161,22 @@ class ChibiBot:
                 
                 response = BOT_TEXTS['myid_response'].format(user_id=user_id)
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(message.chat.id, response, parse_mode='Markdown')
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                    self.safe_send_message(
+                        message.chat.id,
+                        response,
+                        telegram_id_str=str(message.from_user.id)
+                    )
                 else:
                     self.bot.reply_to(message, response, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['connection_lost'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
@@ -1011,12 +1186,11 @@ class ChibiBot:
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             message.chat.id,
                             BOT_TEXTS['ban_message'].format(days_left=days_left),
-                            parse_mode='Markdown'
+                            telegram_id_str=str(message.from_user.id)
                         )
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
@@ -1031,20 +1205,22 @@ class ChibiBot:
                 
                 text = BOT_TEXTS['balance_response'].format(coins=coins)
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(message.chat.id, text, parse_mode='Markdown')
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                    self.safe_send_message(
+                        message.chat.id,
+                        text,
+                        telegram_id_str=str(message.from_user.id)
+                    )
                 else:
                     self.bot.reply_to(message, text, parse_mode='Markdown')
                 
             except Exception as e:
                 logger.error(f"Ошибка: {e}")
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['connection_lost'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
@@ -1054,12 +1230,11 @@ class ChibiBot:
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             message.chat.id,
                             BOT_TEXTS['ban_message'].format(days_left=days_left),
-                            parse_mode='Markdown'
+                            telegram_id_str=str(message.from_user.id)
                         )
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
@@ -1075,13 +1250,12 @@ class ChibiBot:
                 markup.add(btn)
                 
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         text,
                         reply_markup=markup,
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     reply = self.bot.reply_to(message, text, reply_markup=markup, parse_mode='Markdown')
                     self.set_temp(f"msg_owner_{message.chat.id}_{reply.message_id}", str(message.from_user.id))
@@ -1089,12 +1263,11 @@ class ChibiBot:
             except Exception as e:
                 logger.error(f"Ошибка при открытии лавки: {e}")
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['connection_lost'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
@@ -1104,12 +1277,11 @@ class ChibiBot:
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             message.chat.id,
                             BOT_TEXTS['ban_message'].format(days_left=days_left),
-                            parse_mode='Markdown'
+                            telegram_id_str=str(message.from_user.id)
                         )
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
@@ -1124,12 +1296,11 @@ class ChibiBot:
             except Exception as e:
                 logger.error(f"Ошибка при открытии рынка: {e}")
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['connection_lost'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
@@ -1139,12 +1310,11 @@ class ChibiBot:
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             message.chat.id,
                             BOT_TEXTS['ban_message'].format(days_left=days_left),
-                            parse_mode='Markdown'
+                            telegram_id_str=str(message.from_user.id)
                         )
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
@@ -1157,12 +1327,11 @@ class ChibiBot:
                 if cd:
                     time_left = self.format_time(int(cd))
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             message.chat.id,
                             BOT_TEXTS['chibi_cooldown'].format(time_left=time_left),
-                            parse_mode='Markdown'
+                            telegram_id_str=str(message.from_user.id)
                         )
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, BOT_TEXTS['chibi_cooldown'].format(time_left=time_left), parse_mode='Markdown')
                     return
@@ -1172,8 +1341,11 @@ class ChibiBot:
                 
                 if file_path is None:
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(message.chat.id, BOT_TEXTS['chibi_unavailable'], parse_mode='Markdown')
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                        self.safe_send_message(
+                            message.chat.id,
+                            BOT_TEXTS['chibi_unavailable'],
+                            telegram_id_str=str(message.from_user.id)
+                        )
                     else:
                         self.bot.reply_to(message, BOT_TEXTS['chibi_unavailable'], parse_mode='Markdown')
                     return
@@ -1202,12 +1374,11 @@ class ChibiBot:
             except Exception as e:
                 logger.error(f"Ошибка при отправке чиби: {e}")
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['connection_lost'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
@@ -1217,12 +1388,11 @@ class ChibiBot:
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             message.chat.id,
                             BOT_TEXTS['ban_message'].format(days_left=days_left),
-                            parse_mode='Markdown'
+                            telegram_id_str=str(message.from_user.id)
                         )
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
@@ -1243,8 +1413,11 @@ class ChibiBot:
                         text = BOT_TEXTS['task_cooldown_skipped'].format(time_left=time_left)
                     
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(message.chat.id, text, parse_mode='Markdown')
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
+                        self.safe_send_message(
+                            message.chat.id,
+                            text,
+                            telegram_id_str=str(message.from_user.id)
+                        )
                     else:
                         self.bot.reply_to(message, text, parse_mode='Markdown')
                     return
@@ -1264,13 +1437,12 @@ class ChibiBot:
                 markup.add(btn1, btn2)
                 
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         task_text,
                         reply_markup=markup,
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     reply = self.bot.reply_to(message, task_text, reply_markup=markup, parse_mode='Markdown')
                     self.set_temp(f"msg_owner_{message.chat.id}_{reply.message_id}", str(message.from_user.id))
@@ -1278,12 +1450,11 @@ class ChibiBot:
             except Exception as e:
                 logger.error(f"Ошибка при генерации задания: {e}")
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['connection_lost'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
@@ -1293,12 +1464,11 @@ class ChibiBot:
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
                     if message.chat.type == 'private':
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             message.chat.id,
                             BOT_TEXTS['ban_message'].format(days_left=days_left),
-                            parse_mode='Markdown'
+                            telegram_id_str=str(message.from_user.id)
                         )
-                        self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     else:
                         self.bot.reply_to(message, BOT_TEXTS['ban_message'].format(days_left=days_left), parse_mode='Markdown')
                     return
@@ -1325,13 +1495,12 @@ class ChibiBot:
                 markup.add(btn3)
                 
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         text,
                         reply_markup=markup,
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     reply = self.bot.reply_to(message, text, reply_markup=markup, parse_mode='Markdown')
                     self.set_temp(f"msg_owner_{message.chat.id}_{reply.message_id}", str(message.from_user.id))
@@ -1339,12 +1508,11 @@ class ChibiBot:
             except Exception as e:
                 logger.error(f"Ошибка при открытии меню: {e}")
                 if message.chat.type == 'private':
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['connection_lost'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 else:
                     self.bot.reply_to(message, BOT_TEXTS['connection_lost'], parse_mode='Markdown')
 
@@ -1357,12 +1525,11 @@ class ChibiBot:
             try:
                 if self.is_banned(message.from_user.id):
                     days_left = self.get_ban_time(message.from_user.id)
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['ban_message'].format(days_left=days_left),
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
                     
                 if not self.user_started(message.from_user.id):
@@ -1370,12 +1537,11 @@ class ChibiBot:
                     return
                     
                 if len(message.text.split()) < 2:
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['gift_usage'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
                 
                 target_id = message.text.split()[1].strip()
@@ -1383,21 +1549,19 @@ class ChibiBot:
                 target = self.users.find_one({"user_id": target_id})
                 
                 if not target:
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['user_not_found'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
                 
                 if str(message.from_user.id) in self.users.find_one({"user_id": target_id}).get('telegram_id', ''):
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['gift_self'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
                 
                 telegram_id_str = str(message.from_user.id)
@@ -1411,12 +1575,11 @@ class ChibiBot:
                 chibis, page, total = self.chibis_for_gift(message.from_user.id, 1)
                 
                 if not chibis:
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         BOT_TEXTS['gift_no_chibis'],
-                        parse_mode='Markdown'
+                        telegram_id_str=str(message.from_user.id)
                     )
-                    self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                     return
                 
                 text = BOT_TEXTS['gift_select']
@@ -1439,22 +1602,20 @@ class ChibiBot:
                 
                 markup.row(*nav)
                 
-                sent = self.bot.send_message(
+                self.safe_send_message(
                     message.chat.id,
                     text,
                     reply_markup=markup,
-                    parse_mode='Markdown'
+                    telegram_id_str=str(message.from_user.id)
                 )
-                self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
                 
             except Exception as e:
                 logger.error(f"Ошибка при отправке подарка: {e}")
-                sent = self.bot.send_message(
+                self.safe_send_message(
                     message.chat.id,
                     BOT_TEXTS['connection_lost'],
-                    parse_mode='Markdown'
+                    telegram_id_str=str(message.from_user.id)
                 )
-                self.set_temp(f"msg_owner_{message.chat.id}_{sent.message_id}", str(message.from_user.id))
 
         @self.bot.message_handler(func=lambda message: True, content_types=['text'])
         def text_msg(message):
@@ -1502,11 +1663,11 @@ class ChibiBot:
                     except:
                         pass
                     
-                    self.bot.send_message(
+                    self.safe_send_message(
                         message.chat.id,
                         text,
                         reply_markup=markup,
-                        parse_mode='Markdown'
+                        telegram_id_str=telegram_id_str
                     )
                     self.del_temp("waiting_coins", telegram_id_str)
                     
@@ -1598,8 +1759,7 @@ class ChibiBot:
                     
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     
-                    sticker = STICKERS['task_complete']
-                    self.bot.send_sticker(call.message.chat.id, sticker)
+                    self.safe_send_sticker(call.message.chat.id, STICKERS['task_complete'], telegram_id_str)
                     
                     reward = task["reward"]
                     new_coins = user.get('coins', 0) + reward
@@ -1616,12 +1776,11 @@ class ChibiBot:
                     name = call.from_user.first_name or "путешественник"
                     text = BOT_TEXTS['task_complete_success'].format(username=name, reward=reward)
                     
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         call.message.chat.id,
                         text,
-                        parse_mode='Markdown'
+                        telegram_id_str=telegram_id_str
                     )
-                    self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                     
                 elif call.data == "task_cannot_complete":
                     self.bot.answer_callback_query(call.id, BOT_TEXTS['task_cannot_complete'])
@@ -1641,12 +1800,11 @@ class ChibiBot:
                     
                     text = BOT_TEXTS['task_skip_done']
                     
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         call.message.chat.id,
                         text,
-                        parse_mode='Markdown'
+                        telegram_id_str=telegram_id_str
                     )
-                    self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                     
                 elif call.data == "task_skip_confirm":
                     telegram_id_str = str(call.from_user.id)
@@ -2011,12 +2169,11 @@ class ChibiBot:
                     name = user.get('first_name', 'путешественник')
                     text = BOT_TEXTS['bonus_received'].format(username=name, bonus=bonus)
                     
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         call.message.chat.id,
                         text,
-                        parse_mode='Markdown'
+                        telegram_id_str=telegram_id_str
                     )
-                    self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                     
                 elif call.data == "bonus_cooldown":
                     telegram_id_str = str(call.from_user.id)
@@ -2154,21 +2311,19 @@ class ChibiBot:
                     sender_name = call.from_user.first_name or "Отправитель"
                     text = BOT_TEXTS['gift_coins_sent'].format(target_name=target_name)
 
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         call.message.chat.id,
                         text,
-                        parse_mode='Markdown'
+                        telegram_id_str=telegram_id_str
                     )
-                    self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
 
                     text2 = BOT_TEXTS['gift_coins_received'].format(sender_name=sender_name, amount=amount)
 
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         target_tg,
                         text2,
-                        parse_mode='Markdown'
+                        telegram_id_str=target_tg
                     )
-                    self.set_temp(f"msg_owner_{target_tg}_{sent.message_id}", target_tg)
 
                     self.del_temp("gift_data", telegram_id_str)
                     
@@ -2266,29 +2421,25 @@ class ChibiBot:
                             
                             text2 = BOT_TEXTS['gift_prize_sent'].format(target_name=target_name, chibi_name=chibi_name)
                             
-                            sent = self.bot.send_message(
+                            self.safe_send_message(
                                 call.message.chat.id,
                                 text2,
-                                parse_mode='Markdown'
+                                telegram_id_str=telegram_id_str
                             )
-                            self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                             
                     else:
-                        sticker = STICKERS['gift_sent']
-                        self.bot.send_sticker(call.message.chat.id, sticker)
+                        self.safe_send_sticker(call.message.chat.id, STICKERS['gift_sent'], telegram_id_str)
                         
                         sender_name = call.from_user.first_name or "Отправитель"
                         text = BOT_TEXTS['gift_chibi_sent'].format(target_name=target_name)
                         
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             call.message.chat.id,
                             text,
-                            parse_mode='Markdown'
+                            telegram_id_str=telegram_id_str
                         )
-                        self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                         
-                        sticker2 = STICKERS['gift_received']
-                        self.bot.send_sticker(target_tg, sticker2)
+                        self.safe_send_sticker(target_tg, STICKERS['gift_received'], target_tg)
                         
                         text2 = BOT_TEXTS['gift_chibi_received'].format(sender_name=sender_name, chibi_name=chibi_name)
                         
@@ -2296,13 +2447,12 @@ class ChibiBot:
                         btn = types.InlineKeyboardButton("Посмотреть", callback_data="warehouse_chibis_1")
                         markup.add(btn)
                         
-                        sent = self.bot.send_message(
+                        self.safe_send_message(
                             target_tg,
                             text2,
                             reply_markup=markup,
-                            parse_mode='Markdown'
+                            telegram_id_str=target_tg
                         )
-                        self.set_temp(f"msg_owner_{target_tg}_{sent.message_id}", target_tg)
                     
                     self.del_temp("gift_data", telegram_id_str)
                     
@@ -2415,12 +2565,11 @@ class ChibiBot:
                     self.bot.delete_message(call.message.chat.id, call.message.message_id)
                     self.del_temp("creating_lot", telegram_id_str)
                     
-                    sent = self.bot.send_message(
+                    self.safe_send_message(
                         call.message.chat.id,
                         BOT_TEXTS['create_lot_success'],
-                        parse_mode='Markdown'
+                        telegram_id_str=telegram_id_str
                     )
-                    self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
                     
                     time.sleep(1)
                     self.show_hub_page(call.message.chat.id, telegram_id_str, 1)
@@ -2494,13 +2643,12 @@ class ChibiBot:
                 parse_mode='Markdown'
             )
         else:
-            sent = self.bot.send_message(
+            self.safe_send_message(
                 chat_id,
                 text,
                 reply_markup=markup,
-                parse_mode='Markdown'
+                telegram_id_str=telegram_id_str
             )
-            self.set_temp(f"msg_owner_{chat_id}_{sent.message_id}", telegram_id_str)
 
     def show_lot_details(self, chat_id, telegram_id_str, lot_id, message_id):
         try:
@@ -2617,20 +2765,19 @@ class ChibiBot:
                 price=lot['price']
             )
             
-            sent = self.bot.send_message(
+            self.safe_send_message(
                 call.message.chat.id,
                 text,
-                parse_mode='Markdown'
+                telegram_id_str=telegram_id_str
             )
-            self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
             
             if seller.get('telegram_id'):
                 notify_text = f"*Твой лот продан!*\n{text}"
                 try:
-                    self.bot.send_message(
+                    self.safe_send_message(
                         seller['telegram_id'],
                         notify_text,
-                        parse_mode='Markdown'
+                        telegram_id_str=seller['telegram_id']
                     )
                 except:
                     pass
@@ -2669,12 +2816,11 @@ class ChibiBot:
             
             self.bot.delete_message(call.message.chat.id, call.message.message_id)
             
-            sent = self.bot.send_message(
+            self.safe_send_message(
                 call.message.chat.id,
                 BOT_TEXTS['lot_removed'],
-                parse_mode='Markdown'
+                telegram_id_str=telegram_id_str
             )
-            self.set_temp(f"msg_owner_{call.message.chat.id}_{sent.message_id}", telegram_id_str)
             
         except Exception as e:
             logger.error(f"Ошибка удаления лота: {e}")
